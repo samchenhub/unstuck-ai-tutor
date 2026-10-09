@@ -1,6 +1,6 @@
 import pytest
 
-from unstuck.db import repo
+from unstuck.db import connect, repo
 from unstuck.models import Cue, FrameDescription, NewKeyframe, Segment
 
 VID = "abcdefghijk"
@@ -16,6 +16,14 @@ def unit(dim, i):
 def test_vec_extension_loaded(conn):
     (version,) = conn.execute("select vec_version()").fetchone()
     assert version.startswith("v")
+
+
+def test_connect_rejects_embedding_dimension_mismatch(tmp_path):
+    path = tmp_path / "dim.db"
+    connect(path, 64).close()
+    with pytest.raises(RuntimeError, match="dimension"):
+        connect(path, 32)
+    connect(path, 64).close()
 
 
 def test_insert_and_get_video(conn):

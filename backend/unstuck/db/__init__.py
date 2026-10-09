@@ -1,3 +1,4 @@
+import re
 import sqlite3
 from pathlib import Path
 
@@ -20,6 +21,19 @@ def connect(db_path: Path, embed_dim: int) -> sqlite3.Connection:
     conn.enable_load_extension(False)
     conn.execute("PRAGMA journal_mode=WAL")
     conn.executescript(SCHEMA)
+    _check_embed_dim(conn, db_path, embed_dim)
     conn.execute(vec_table_sql(embed_dim))
     conn.commit()
     return conn
+
+
+def _check_embed_dim(conn: sqlite3.Connection, db_path: Path, embed_dim: int) -> None:
+    """A vec0 table's dimension is fixed at creation; fail loudly instead of on first insert."""
+    row = conn.execute("SELECT sql FROM sqlite_master WHERE name = 'vec_segments'").fetchone()
+    match = re.search(r"float\[(\d+)\]", row["sql"]) if row else None
+    if match and int(match.group(1)) != embed_dim:
+        conn.close()
+        raise RuntimeError(
+            f"vec_segments was created with dimension {match.group(1)} but EMBED_DIM is {embed_dim}; "
+            f"delete {db_path} or restore EMBED_DIM"
+        )

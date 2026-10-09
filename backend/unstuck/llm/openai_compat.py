@@ -54,6 +54,11 @@ class OpenAICompatLLM:
         return self._complete(self._chat_model, messages, **kwargs)
 
     def chat_stream(self, messages: list[dict]) -> Iterator[str]:
+        # The concurrency slot is held for the whole stream on purpose: a streaming answer
+        # is an in-flight API request, so it counts against the provider's concurrency
+        # limit. Only stream creation is retried (a failure mid-stream propagates, since
+        # tokens may already have been yielded). Callers must exhaust or close the
+        # generator, otherwise the slot is not released until it is garbage-collected.
         with self._slots:
             stream = with_retry(
                 lambda: self._client.chat.completions.create(
