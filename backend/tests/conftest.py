@@ -4,8 +4,10 @@ import subprocess
 import pytest
 
 from unstuck.config import Settings
-from unstuck.db import connect
+from unstuck.db import connect, repo
+from unstuck.ingest import indexer
 from unstuck.llm import FakeLLM
+from unstuck.models import FrameDescription, NewKeyframe, Segment
 
 
 @pytest.fixture
@@ -47,3 +49,39 @@ def sample_video(tmp_path_factory):
         check=True,
     )
     return out
+
+
+SEEDED_ID = "abcdefghijk"
+SEEDED_TOPICS = [
+    "intro to vectors", "dot product definition", "dot product geometry cosine", "cross product",
+    "matrix multiplication", "determinant area", "eigenvalues", "eigenvectors", "diagonalization", "summary",
+]
+
+
+@pytest.fixture
+def seeded_video(conn, settings, fake_llm):
+    repo.insert_video(conn, SEEDED_ID, f"https://www.youtube.com/watch?v={SEEDED_ID}")
+    repo.replace_segments(conn, SEEDED_ID, [
+        Segment(i * 30.0, (i + 1) * 30.0, f"In this part we discuss {topic}.")
+        for i, topic in enumerate(SEEDED_TOPICS)
+    ])
+    formula, diagram = repo.replace_keyframes(conn, SEEDED_ID, [
+        NewKeyframe(100.0, str(settings.data_dir / "f100.jpg"), "0" * 16),
+        NewKeyframe(200.0, str(settings.data_dir / "f200.jpg"), "f" * 16),
+    ])
+    repo.save_frame_description(conn, formula.id, FrameDescription(
+        "formula", "Slide showing the dot product formula", "a \\cdot b = |a||b| \\cos\\theta", ""))
+    repo.save_frame_description(conn, diagram.id, FrameDescription(
+        "diagram", "Parallelogram spanned by two vectors", "det(A)", "new diagram"))
+    indexer.build_index(conn, fake_llm, SEEDED_ID)
+    repo.update_video(
+        conn, SEEDED_ID,
+        title="Linear Algebra Basics", duration=300.0, status="ready", ask_ready=True, visual_mode="full",
+        outline=[
+            {"start": 0.0, "title": "Vectors", "summary": "Vectors and the dot product"},
+            {"start": 120.0, "title": "Matrices", "summary": "Matrix operations"},
+        ],
+        stage_states={name: "done" for name in (
+            "metadata", "transcript", "download", "keyframes", "vision", "timeline", "index", "outline")},
+    )
+    return SEEDED_ID
