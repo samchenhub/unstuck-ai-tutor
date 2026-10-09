@@ -120,3 +120,79 @@ def test_prepare_failure_yields_error_without_saving(conn, settings, fake_llm):
     events = list(stream_answer(conn, fake_llm, settings, "missingvid1", "q", 1.0))
     assert [e["type"] for e in events] == ["error"]
     assert repo.list_chats(conn, "missingvid1") == []
+
+
+def test_history_skips_empty_assistant_and_its_question(conn, fake_llm, settings, seeded_video, no_live_frames):
+    repo.add_chat(conn, seeded_video, "user", "q1", 50.0)
+    repo.add_chat(conn, seeded_video, "assistant", "", 50.0, complete=False)
+    repo.add_chat(conn, seeded_video, "user", "q2", 60.0)
+    repo.add_chat(conn, seeded_video, "assistant", "a2", 60.0)
+
+    messages = prepare_messages(conn, fake_llm, settings, seeded_video, "next", 110.0)
+
+    assert [(m["role"], m["content"]) for m in messages[1:-1]] == [("user", "q2"), ("assistant", "a2")]
+
+
+def test_history_drops_orphan_trailing_question(conn, fake_llm, settings, seeded_video, no_live_frames):
+    repo.add_chat(conn, seeded_video, "user", "q1", 50.0)
+    repo.add_chat(conn, seeded_video, "assistant", "a1", 50.0)
+    repo.add_chat(conn, seeded_video, "user", "q3", 60.0)
+
+    messages = prepare_messages(conn, fake_llm, settings, seeded_video, "next", 110.0)
+
+    assert [m["role"] for m in messages] == ["system", "user", "assistant", "user"]
+    assert "q3" not in [m["content"] for m in messages[1:3]]
+
+
+def test_history_adjacent_assistants_keep_the_later(conn, fake_llm, settings, seeded_video, no_live_frames):
+    repo.add_chat(conn, seeded_video, "user", "q1", 50.0)
+    repo.add_chat(conn, seeded_video, "assistant", "first", 50.0, complete=False)
+    repo.add_chat(conn, seeded_video, "assistant", "second", 50.0)
+
+    messages = prepare_messages(conn, fake_llm, settings, seeded_video, "next", 110.0)
+
+    assert [(m["role"], m["content"]) for m in messages[1:-1]] == [("user", "q1"), ("assistant", "second")]
+
+
+def failing_add_chat(monkeypatch, fail_on_call):
+    real = answer.repo.add_chat
+    calls = []
+
+    def add_chat(*args, **kwargs):
+        calls.append(args)
+        if len(calls) == fail_on_call:
+            raise RuntimeError("disk full")
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(answer.repo, "add_chat", add_chat)
+
+
+def test_question_save_failure_yields_error_without_calling_model(
+    conn, settings, seeded_video, no_live_frames, monkeypatch
+):
+    llm = FakeLLM(chat_responses=["never used"], embed_dim=settings.embed_dim)
+    failing_add_chat(monkeypatch, 1)
+
+    events = list(stream_answer(conn, llm, settings, seeded_video, "q", 110.0))
+
+    assert events == [{"type": "error", "message": "保存提问失败，请重试"}]
+    assert not [c for c in llm.calls if c[0] == "chat_stream"]
+
+
+def test_partial_save_failure_still_yields_error(conn, settings, seeded_video, no_live_frames, monkeypatch):
+    llm = FakeLLM(chat_responses=[["Hel", RuntimeError("cut")]], embed_dim=settings.embed_dim)
+    failing_add_chat(monkeypatch, 2)
+
+    events = list(stream_answer(conn, llm, settings, seeded_video, "q", 110.0))
+
+    assert [e["type"] for e in events] == ["delta", "error"]
+    assert "chat_id" not in events[-1]
+
+
+def test_disconnect_with_failing_save_still_closes(conn, settings, seeded_video, no_live_frames, monkeypatch):
+    llm = FakeLLM(chat_responses=[["first ", "second"]], embed_dim=settings.embed_dim)
+    failing_add_chat(monkeypatch, 2)
+    stream = stream_answer(conn, llm, settings, seeded_video, "q", 110.0)
+
+    next(stream)
+    stream.close()  # must not raise

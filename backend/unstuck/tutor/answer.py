@@ -44,6 +44,33 @@ def _current_transcript(window: list[Segment], t: float) -> str:
     return current.transcript if current else ""
 
 
+def _alternating_history(history: list[Chat]) -> list[dict]:
+    """Chat rows as messages that strictly alternate user/assistant and end with an assistant turn.
+
+    Empty rows are dropped, a question without an answer is dropped, and when two
+    answers are adjacent only the later one is kept.
+    """
+    out: list[dict] = []
+    for chat in history:
+        if not chat.content:
+            continue
+        message = {"role": chat.role, "content": chat.content}
+        if chat.role == "assistant":
+            if not out:
+                continue  # an answer with no question before it
+            if out[-1]["role"] == "assistant":
+                out[-1] = message
+            else:
+                out.append(message)
+        elif out and out[-1]["role"] == "user":
+            out[-1] = message  # the earlier question never got an answer
+        else:
+            out.append(message)
+    if out and out[-1]["role"] == "user":
+        out.pop()
+    return out
+
+
 def prepare_messages(
     conn: sqlite3.Connection,
     llm: LLM,
@@ -86,7 +113,7 @@ def prepare_messages(
     ))
 
     messages = [{"role": "system", "content": SYSTEM_PROMPT}]
-    messages += [{"role": c.role, "content": c.content} for c in built.history if c.content]
+    messages += _alternating_history(built.history)
     messages.append({
         "role": "user",
         "content": f"{built.video_data}\n\nThe learner paused the video at [{fmt_ts(t)}] and asks:\n{question}",
@@ -104,7 +131,13 @@ def stream_answer(
         yield {"type": "error", "message": "准备上下文失败，请重试"}
         return
 
-    repo.add_chat(conn, video_id, "user", question, t)
+    try:
+        repo.add_chat(conn, video_id, "user", question, t)
+    except Exception:
+        log.exception("failed to save the question for %s", video_id)
+        yield {"type": "error", "message": "保存提问失败，请重试"}
+        return
+
     parts: list[str] = []
     try:
         for delta in llm.chat_stream(messages):
@@ -112,13 +145,28 @@ def stream_answer(
             yield {"type": "delta", "text": delta}
     except GeneratorExit:
         # Client went away mid-answer: keep what was produced so far.
-        repo.add_chat(conn, video_id, "assistant", "".join(parts), t, complete=False)
+        _save_answer(conn, video_id, parts, t, complete=False)
         raise
     except Exception:
         log.exception("answer stream failed for %s", video_id)
-        chat_id = repo.add_chat(conn, video_id, "assistant", "".join(parts), t, complete=False)
-        yield {"type": "error", "message": "回答生成中断了，可以点击重新生成", "chat_id": chat_id}
+        chat_id = _save_answer(conn, video_id, parts, t, complete=False)
+        yield _interrupted(chat_id)
         return
 
-    chat_id = repo.add_chat(conn, video_id, "assistant", "".join(parts), t)
-    yield {"type": "done", "chat_id": chat_id}
+    chat_id = _save_answer(conn, video_id, parts, t, complete=True)
+    yield {"type": "done", "chat_id": chat_id} if chat_id is not None else _interrupted(None)
+
+
+def _save_answer(conn: sqlite3.Connection, video_id: str, parts: list[str], t: float, *, complete: bool) -> int | None:
+    try:
+        return repo.add_chat(conn, video_id, "assistant", "".join(parts), t, complete=complete)
+    except Exception:
+        log.exception("failed to save the answer for %s", video_id)
+        return None
+
+
+def _interrupted(chat_id: int | None) -> dict:
+    event = {"type": "error", "message": "回答生成中断了，可以点击重新生成"}
+    if chat_id is not None:
+        event["chat_id"] = chat_id
+    return event
