@@ -73,20 +73,30 @@ class OpenAICompatLLM:
         return self._complete(self._chat_model, messages, **kwargs)
 
     def chat_stream(self, messages: list[dict]) -> Iterator[str]:
-        # The concurrency slot is held for the whole stream on purpose: a streaming answer
-        # is an in-flight API request, so it counts against the provider's concurrency
-        # limit. Only stream creation is retried (a failure mid-stream propagates, since
-        # tokens may already have been yielded). Callers must exhaust or close the
-        # generator, otherwise the slot is not released until it is garbage-collected.
-        with self._slots:
-            stream = self._with_retry(
-                lambda: self._client.chat.completions.create(
+        # An open stream is an in-flight API request, so it holds a concurrency slot for
+        # its whole life; the slot is released when the generator finishes, raises or is
+        # closed. Backoff sleeps never hold the slot: each creation attempt acquires it
+        # and gives it back on failure, so a rate-limited answer cannot starve ingest.
+        # Only stream creation is retried (a failure mid-stream propagates, since tokens
+        # may already have been yielded). Callers must exhaust or close the generator,
+        # otherwise the slot is not released until it is garbage-collected.
+        def create():
+            self._slots.acquire()
+            try:
+                return self._client.chat.completions.create(
                     model=self._chat_model, messages=messages, stream=True, extra_body=self._extra_body
                 )
-            )
+            except BaseException:
+                self._slots.release()
+                raise
+
+        stream = self._with_retry(create)
+        try:
             for chunk in stream:
                 if chunk.choices and chunk.choices[0].delta.content:
                     yield chunk.choices[0].delta.content
+        finally:
+            self._slots.release()
 
     def vision(self, prompt: str, image_path: Path) -> str:
         path = Path(image_path)

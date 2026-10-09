@@ -161,6 +161,47 @@ def test_chat_stream_yields_only_non_empty_content():
     assert call["model"] == "chat-m"
 
 
+def slot_is_free(llm):
+    if not llm._slots.acquire(blocking=False):
+        return False
+    llm._slots.release()
+    return True
+
+
+def test_stream_creation_backoff_does_not_hold_the_concurrency_slot(monkeypatch):
+    llm = make_llm(
+        [rate_limit_error(), rate_limit_error(), iter([chunk("a"), chunk("b")])], max_concurrency=1
+    )
+    slot_free_during_sleep = []
+    monkeypatch.setattr("unstuck.llm.retry.time.sleep", lambda s: slot_free_during_sleep.append(slot_is_free(llm)))
+    assert list(llm.chat_stream([{"role": "user", "content": "hi"}])) == ["a", "b"]
+    assert slot_free_during_sleep == [True, True]
+
+
+def test_slot_is_held_while_streaming_and_free_after_exhaustion():
+    llm = make_llm([iter([chunk("a"), chunk("b")])], max_concurrency=1)
+    stream = llm.chat_stream([{"role": "user", "content": "hi"}])
+    assert next(stream) == "a"
+    assert not slot_is_free(llm)
+    assert list(stream) == ["b"]
+    assert slot_is_free(llm)
+
+
+def test_slot_is_free_after_early_close():
+    llm = make_llm([iter([chunk("a"), chunk("b")])], max_concurrency=1)
+    stream = llm.chat_stream([{"role": "user", "content": "hi"}])
+    next(stream)
+    stream.close()
+    assert slot_is_free(llm)
+
+
+def test_slot_is_free_after_stream_creation_gives_up():
+    llm = make_llm([rate_limit_error() for _ in range(6)], max_concurrency=1)
+    with pytest.raises(ModelBusyError):
+        list(llm.chat_stream([{"role": "user", "content": "hi"}]))
+    assert slot_is_free(llm)
+
+
 def test_embed_delegates_to_embedder():
     embedder = StubEmbedder()
     llm = make_llm([], embedder=embedder)

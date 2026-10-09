@@ -25,7 +25,7 @@ Rules:
 7. If the video material does not cover the question, say so briefly and answer from general knowledge."""
 
 
-MODEL_BUSY_MESSAGE = "模型当前繁忙（免费额度限流），请稍后点击重新生成"
+ANSWER_BUSY_MESSAGE = "模型当前繁忙（免费额度限流），请稍后点击重新生成"
 
 
 def _language_instruction(question: str) -> str:
@@ -145,7 +145,7 @@ def stream_answer(
         messages = prepare_messages(conn, llm, settings, video_id, question, t)
     except ModelBusyError:
         log.warning("model busy while preparing context for %s", video_id)
-        yield {"type": "error", "message": MODEL_BUSY_MESSAGE}
+        yield {"type": "error", "message": ANSWER_BUSY_MESSAGE}
         return
     except Exception:
         log.exception("failed to prepare context for %s", video_id)
@@ -171,7 +171,7 @@ def stream_answer(
     except Exception as exc:
         log.exception("answer stream failed for %s", video_id)
         chat_id = _save_answer(conn, video_id, parts, t, complete=False)
-        yield _interrupted(chat_id, MODEL_BUSY_MESSAGE if isinstance(exc, ModelBusyError) else None)
+        yield _interrupted(chat_id, ANSWER_BUSY_MESSAGE if isinstance(exc, ModelBusyError) else None)
         return
 
     chat_id = _save_answer(conn, video_id, parts, t, complete=True)
