@@ -5,7 +5,7 @@ import httpx
 import openai
 import pytest
 
-from unstuck.llm import factory
+from unstuck.llm import ModelBusyError, factory
 from unstuck.llm.openai_compat import OpenAICompatLLM
 
 
@@ -43,7 +43,7 @@ def chunk(text, *, no_choices=False):
     return SimpleNamespace(choices=choices)
 
 
-def make_llm(results, *, extra_body=None, embedder=None):
+def make_llm(results, *, extra_body=None, embedder=None, **kwargs):
     llm = OpenAICompatLLM(
         base_url="http://fake.invalid",
         api_key="k",
@@ -51,6 +51,7 @@ def make_llm(results, *, extra_body=None, embedder=None):
         vision_model="vision-m",
         embedder=embedder or StubEmbedder(),
         extra_body=extra_body,
+        **kwargs,
     )
     llm._client = StubClient(results)
     return llm
@@ -85,6 +86,49 @@ def test_chat_retries_retryable_error_then_succeeds():
     llm = make_llm([connection_error(), reply("ok")])
     assert llm.chat([{"role": "user", "content": "hi"}]) == "ok"
     assert len(llm._client.calls) == 2
+
+
+def rate_limit_error():
+    response = httpx.Response(429, request=httpx.Request("POST", "http://x"))
+    return openai.RateLimitError("busy", response=response, body=None)
+
+
+def test_chat_backs_off_2_4_8_16_32_seconds_by_default(monkeypatch):
+    delays = []
+    monkeypatch.setattr("unstuck.llm.retry.time.sleep", delays.append)
+    llm = make_llm([connection_error() for _ in range(5)] + [reply("ok")])
+    assert llm.chat([{"role": "user", "content": "hi"}]) == "ok"
+    assert delays == [2.0, 4.0, 8.0, 16.0, 32.0]
+
+
+def test_retry_settings_are_configurable(monkeypatch):
+    delays = []
+    monkeypatch.setattr("unstuck.llm.retry.time.sleep", delays.append)
+    llm = make_llm([connection_error(), connection_error()], retry_attempts=2, retry_base_delay=0.5)
+    with pytest.raises(openai.APIConnectionError):
+        llm.chat([{"role": "user", "content": "hi"}])
+    assert delays == [0.5]
+
+
+def test_exhausted_rate_limit_raises_model_busy_error():
+    original = rate_limit_error()
+    llm = make_llm([original for _ in range(6)])
+    with pytest.raises(ModelBusyError, match="稍后重试") as info:
+        llm.chat([{"role": "user", "content": "hi"}])
+    assert info.value.__cause__ is original
+    assert len(llm._client.calls) == 6
+
+
+def test_exhausted_rate_limit_on_stream_creation_raises_model_busy_error():
+    llm = make_llm([rate_limit_error() for _ in range(6)])
+    with pytest.raises(ModelBusyError):
+        list(llm.chat_stream([{"role": "user", "content": "hi"}]))
+
+
+def test_exhausted_connection_error_propagates_unchanged():
+    llm = make_llm([connection_error() for _ in range(6)])
+    with pytest.raises(openai.APIConnectionError):
+        llm.chat([{"role": "user", "content": "hi"}])
 
 
 def test_chat_does_not_retry_non_retryable_error():

@@ -1,12 +1,14 @@
 import base64
 import mimetypes
 import threading
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from pathlib import Path
+from typing import TypeVar
 
 import openai
 from openai import OpenAI
 
+from unstuck.llm.base import ModelBusyError
 from unstuck.llm.embedder import BgeM3Embedder
 from unstuck.llm.retry import with_retry
 
@@ -16,6 +18,10 @@ RETRYABLE = (
     openai.APITimeoutError,
     openai.InternalServerError,
 )
+
+MODEL_BUSY_MESSAGE = "模型当前访问量过大（免费额度限流），请稍后重试"
+
+T = TypeVar("T")
 
 
 class OpenAICompatLLM:
@@ -31,6 +37,8 @@ class OpenAICompatLLM:
         embedder: BgeM3Embedder,
         extra_body: dict | None = None,
         max_concurrency: int = 2,
+        retry_attempts: int = 6,
+        retry_base_delay: float = 2.0,
     ):
         self._client = OpenAI(base_url=base_url, api_key=api_key, max_retries=0, timeout=120)
         self._chat_model = chat_model
@@ -38,6 +46,17 @@ class OpenAICompatLLM:
         self._embedder = embedder
         self._extra_body = extra_body
         self._slots = threading.Semaphore(max_concurrency)
+        self._retry_attempts = retry_attempts
+        self._retry_base_delay = retry_base_delay
+
+    def _with_retry(self, fn: Callable[[], T]) -> T:
+        # Free tiers rate-limit in bursts, so the default waits 2+4+8+16+32 s before giving up.
+        try:
+            return with_retry(
+                fn, attempts=self._retry_attempts, base_delay=self._retry_base_delay, retry_on=RETRYABLE
+            )
+        except openai.RateLimitError as exc:
+            raise ModelBusyError(MODEL_BUSY_MESSAGE) from exc
 
     def _complete(self, model: str, messages: list[dict], **kwargs) -> str:
         def call() -> str:
@@ -47,7 +66,7 @@ class OpenAICompatLLM:
                 )
             return resp.choices[0].message.content or ""
 
-        return with_retry(call, retry_on=RETRYABLE)
+        return self._with_retry(call)
 
     def chat(self, messages: list[dict], *, json_mode: bool = False) -> str:
         kwargs = {"response_format": {"type": "json_object"}} if json_mode else {}
@@ -60,11 +79,10 @@ class OpenAICompatLLM:
         # tokens may already have been yielded). Callers must exhaust or close the
         # generator, otherwise the slot is not released until it is garbage-collected.
         with self._slots:
-            stream = with_retry(
+            stream = self._with_retry(
                 lambda: self._client.chat.completions.create(
                     model=self._chat_model, messages=messages, stream=True, extra_body=self._extra_body
-                ),
-                retry_on=RETRYABLE,
+                )
             )
             for chunk in stream:
                 if chunk.choices and chunk.choices[0].delta.content:

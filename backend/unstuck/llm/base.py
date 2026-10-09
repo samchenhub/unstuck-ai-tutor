@@ -3,6 +3,10 @@ from pathlib import Path
 from typing import Protocol
 
 
+class ModelBusyError(Exception):
+    """The model provider kept rate-limiting us after every retry."""
+
+
 class LLM(Protocol):
     """Every model call in Unstuck goes through this interface."""
 

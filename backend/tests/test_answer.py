@@ -1,7 +1,7 @@
 import pytest
 
 from unstuck.db import repo
-from unstuck.llm import FakeLLM
+from unstuck.llm import FakeLLM, ModelBusyError
 from unstuck.tutor import answer
 from unstuck.tutor.answer import SYSTEM_PROMPT, prepare_messages, stream_answer
 
@@ -103,6 +103,47 @@ def test_stream_failure_keeps_partial_answer(conn, settings, seeded_video, no_li
     assistant = repo.list_chats(conn, seeded_video)[-1]
     assert assistant.content == "Hello" and assistant.complete is False
     assert events[-1]["chat_id"] == assistant.id
+
+
+def test_model_busy_mid_stream_reports_rate_limit_and_keeps_partial(conn, settings, seeded_video, no_live_frames):
+    llm = FakeLLM(chat_responses=[["Hi", ModelBusyError("x")]], embed_dim=settings.embed_dim)
+
+    events = list(stream_answer(conn, llm, settings, seeded_video, "q", 110.0))
+
+    assert events[-1]["type"] == "error"
+    assert events[-1]["message"] == "模型当前繁忙（免费额度限流），请稍后点击重新生成"
+    assistant = repo.list_chats(conn, seeded_video)[-1]
+    assert assistant.content == "Hi" and assistant.complete is False
+    assert events[-1]["chat_id"] == assistant.id
+
+
+def test_model_busy_while_preparing_reports_rate_limit(conn, settings, seeded_video, no_live_frames):
+    llm = FakeLLM(embed_dim=settings.embed_dim)
+
+    def busy(*args, **kwargs):
+        raise ModelBusyError("x")
+
+    llm.embed = busy
+    events = list(stream_answer(conn, llm, settings, seeded_video, "q", 110.0))
+
+    assert events == [{"type": "error", "message": "模型当前繁忙（免费额度限流），请稍后点击重新生成"}]
+    assert repo.list_chats(conn, seeded_video) == []
+
+
+@pytest.mark.parametrize(
+    ("question", "instruction"),
+    [
+        ("为什么要用余弦？", "Answer in Chinese (简体中文), even though the video material may be in another language."),
+        ("Why the cosine?", "Answer in the same language as the learner's question."),
+        ("これは何ですか", "Answer in Japanese."),
+        ("이것은 무엇입니까", "Answer in Korean."),
+    ],
+)
+def test_answer_language_instruction_ends_the_user_message(
+    conn, fake_llm, settings, seeded_video, no_live_frames, question, instruction
+):
+    messages = prepare_messages(conn, fake_llm, settings, seeded_video, question, 110.0)
+    assert user_content(messages).endswith(f"asks:\n{question}\n\n{instruction}")
 
 
 def test_client_disconnect_keeps_partial_answer(conn, settings, seeded_video, no_live_frames):

@@ -3,6 +3,7 @@ import pytest
 from unstuck.db import repo
 from unstuck.errors import IngestError
 from unstuck.ingest.pipeline import SKIPPED, STAGES, Pipeline, StageContext
+from unstuck.llm import ModelBusyError
 
 VID = "abcdefghijk"
 
@@ -90,6 +91,17 @@ def test_non_critical_failure_continues(ctx):
     assert video.stage_states["outline"] == "done"
     assert video.error_code == "STAGE_FAILED"
     assert "model down" in video.error_message
+
+
+def test_model_busy_in_non_critical_stage_is_reported_in_chinese(ctx):
+    order = []
+    Pipeline(recording(order, {"outline": raise_(ModelBusyError("x"))})).run(ctx)
+    video = repo.get_video(ctx.conn, VID)
+    assert video.status == "ready"
+    assert video.stage_states["outline"] == "failed"
+    assert video.error_code == "MODEL_BUSY"
+    assert video.error_message.startswith("outline 阶段")
+    assert "稍后" in video.error_message
 
 
 def test_skipped_stages_are_recorded_and_not_rerun(ctx):
