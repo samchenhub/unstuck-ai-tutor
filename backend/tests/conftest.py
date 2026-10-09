@@ -2,6 +2,7 @@ import pytest
 
 from unstuck.config import Settings
 from unstuck.db import connect
+from unstuck.llm import FakeLLM
 
 
 @pytest.fixture
@@ -24,3 +25,8 @@ def conn(settings):
     c = connect(settings.db_path, settings.embed_dim)
     yield c
     c.close()
+
+
+@pytest.fixture
+def fake_llm(settings):
+    return FakeLLM(embed_dim=settings.embed_dim)
