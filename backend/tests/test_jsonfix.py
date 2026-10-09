@@ -43,3 +43,35 @@ def test_latex_backslashes_survive():
 
 def test_ordinary_json_escapes_still_decode():
     assert loads_lenient(r'{"o": "a\nfor b"}') == {"o": "a\nfor b"}
+
+
+def test_failed_outer_object_is_repaired_not_replaced_by_inner_list():
+    raw = r'{"kind":"formula","summary":"s","ocr_text":"\alpha + x[0]","change_note":""}'
+    obj = loads_lenient(raw)
+    assert isinstance(obj, dict)
+    assert obj["kind"] == "formula"
+    assert "x[0]" in obj["ocr_text"]
+
+
+def test_literal_newline_in_string_keeps_outer_object():
+    raw = '{"kind":"code","summary":"s","ocr_text":"a = 1\nb = arr[0]","change_note":""}'
+    obj = loads_lenient(raw)
+    assert isinstance(obj, dict)
+    assert "arr[0]" in obj["ocr_text"]
+
+
+def test_truncated_object_with_inner_list_keeps_outer_object():
+    raw = '{"kind":"code","summary":"s","ocr_text":"x = [1, 2]", "change_no'
+    obj = loads_lenient(raw)
+    assert isinstance(obj, dict)
+    assert obj["ocr_text"] == "x = [1, 2]"
+
+
+def test_truncated_list_of_objects_keeps_the_list():
+    obj = loads_lenient('[{"a": 1}, {"b": ')
+    assert isinstance(obj, list)
+    assert obj[0] == {"a": 1}
+
+
+def test_already_escaped_backslash_is_untouched():
+    assert loads_lenient(r'{"o": "\\theta"}') == {"o": "\\theta"}

@@ -6,6 +6,8 @@ from json_repair import repair_json
 # A fence that starts the text or a line; used only when strict decoding fails.
 _FENCE_RE = re.compile(r"(?:^|\n)```(?:json)?\s*\n?(.*?)(?:\n```|$)", re.S)
 # LaTeX commands whose first letter collides with a JSON escape (b f n r t u).
+# Known ambiguity: a real "\n" escape directly followed by a whitelisted word
+# (e.g. code "\ne = 1") is read as the LaTeX command \ne.
 _LATEX_BACKSLASH_RE = re.compile(
     r"(?<!\\)\\(?=(?:beta|bar|bf|binom|bigl|bigr|boldsymbol|bot|frac|forall|flat|nabla|neq|ne|nu|neg|not"
     r"|rho|right|rightarrow|rangle|rceil|rfloor|rm|theta|tau|times|tan|tanh|text|textbf|tilde|to|top"
@@ -13,33 +15,42 @@ _LATEX_BACKSLASH_RE = re.compile(
 )
 
 
-def _candidate_starts(text: str) -> list[int]:
-    return sorted(i for i in (text.find("{"), text.find("[")) if i != -1)
+def _start(text: str) -> int | None:
+    starts = [i for i in (text.find("{"), text.find("[")) if i != -1]
+    return min(starts) if starts else None
+
+
+def _raw_decode(text: str, start: int) -> dict | list | None:
+    try:
+        obj, _end = json.JSONDecoder().raw_decode(text[start:])
+    except json.JSONDecodeError:
+        return None
+    return obj if isinstance(obj, (dict, list)) else None
 
 
 def _decode(text: str) -> dict | list | None:
-    """Strict-decode a JSON object/list from the earliest candidate start that yields one.
+    """Strict-decode at the earliest '{' / '['. Never falls back to inner fragments.
 
-    A list of plain scalars (e.g. a "[1]" citation in chatter) only wins when no
-    object or structured list decodes later in the text."""
-    fallback = None
-    for start in _candidate_starts(text):
-        try:
-            obj, _end = json.JSONDecoder().raw_decode(text[start:])
-        except json.JSONDecodeError:
-            continue
-        if isinstance(obj, dict) or (isinstance(obj, list) and any(isinstance(x, (dict, list)) for x in obj)):
-            return obj
-        if isinstance(obj, list) and fallback is None:
-            fallback = obj
-    return fallback
+    Exception: a list of plain scalars (e.g. a "[1]" citation in chatter) yields to
+    a later object that decodes strictly."""
+    start = _start(text)
+    if start is None:
+        return None
+    obj = _raw_decode(text, start)
+    if isinstance(obj, list) and not any(isinstance(x, (dict, list)) for x in obj):
+        brace = text.find("{", start)
+        if brace != -1:
+            inner = _raw_decode(text, brace)
+            if isinstance(inner, dict):
+                return inner
+    return obj
 
 
 def _repair(text: str) -> dict | list | None:
-    starts = _candidate_starts(text)
-    if not starts:
+    start = _start(text)
+    if start is None:
         return None
-    repaired = repair_json(text[starts[0]:], return_objects=True)
+    repaired = repair_json(text[start:], return_objects=True)
     if isinstance(repaired, (dict, list)) and repaired:
         return repaired
     return None
