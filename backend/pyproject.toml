@@ -1,0 +1,34 @@
+[project]
+name = "unstuck"
+version = "0.1.0"
+description = "Video-aware one-on-one AI tutor"
+requires-python = ">=3.11"
+dependencies = [
+  "fastapi>=0.115",
+  "uvicorn[standard]>=0.30",
+  "openai>=1.40",
+  "python-dotenv>=1.0",
+  "sqlite-vec>=0.1.6",
+  "yt-dlp>=2025.1.1",
+  "scenedetect[opencv]>=0.6.4",
+  "faster-whisper>=1.0",
+  "imagehash>=4.3",
+  "Pillow>=10.0",
+  "sentence-transformers>=3.0",
+  "json-repair>=0.30",
+]
+
+[dependency-groups]
+dev = ["pytest>=8.0", "httpx>=0.27"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["unstuck"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = ["slow: real network / real models; run with `-m slow`"]
+addopts = "-m 'not slow'"
