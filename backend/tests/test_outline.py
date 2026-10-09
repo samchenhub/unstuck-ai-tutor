@@ -48,3 +48,26 @@ def test_generate_outline_sends_timestamped_transcript():
     prompt = messages[-1]["content"]
     assert "Linear Algebra" in prompt
     assert "[00:30] dot products" in prompt
+
+
+def test_parse_outline_rejects_non_finite_starts():
+    raw = '{"chapters": [{"start": 0, "title": "A"}, {"start": NaN, "title": "B"}, {"start": 30, "title": "C"}]}'
+    outline = parse_outline(raw, 100)
+    assert [c["title"] for c in outline] == ["A", "C"]
+
+
+def test_parse_outline_rejects_boolean_starts():
+    raw = '{"chapters": [{"start": true, "title": "X"}, {"start": 0, "title": "Y"}]}'
+    outline = parse_outline(raw, 60)
+    assert [c["title"] for c in outline] == ["Y"]
+
+
+def test_parse_outline_skips_null_title_and_blanks_null_summary():
+    raw = '[{"start": 0, "title": null}, {"start": 10, "title": "Real", "summary": null}]'
+    assert parse_outline(raw, 60) == [{"start": 0.0, "title": "Real", "summary": ""}]
+
+
+def test_generate_outline_skips_llm_when_no_segments():
+    llm = FakeLLM(chat_responses=['{"chapters": [{"start": 0, "title": "Intro"}]}'])
+    assert generate_outline(llm, [], "T", 60) == []
+    assert llm.calls == []

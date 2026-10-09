@@ -1,3 +1,5 @@
+import math
+
 from unstuck.jsonfix import loads_lenient
 from unstuck.llm.base import LLM
 from unstuck.models import Segment
@@ -20,6 +22,8 @@ def build_outline_messages(segments: list[Segment], title: str) -> list[dict]:
 
 
 def _start_seconds(value) -> float | None:
+    if isinstance(value, bool):
+        return None
     if isinstance(value, (int, float)):
         return float(value)
     if isinstance(value, str):
@@ -41,13 +45,21 @@ def parse_outline(raw: str, duration: float) -> list[dict]:
         return []
     chapters = []
     for item in obj:
-        if not isinstance(item, dict) or not str(item.get("title", "")).strip():
+        if not isinstance(item, dict):
+            continue
+        title = item.get("title")
+        if not isinstance(title, str) or not title.strip():
             continue
         start = _start_seconds(item.get("start"))
-        if start is None or start < 0 or start >= duration:
+        if start is None or not math.isfinite(start) or not 0 <= start < duration:
             continue
+        summary = item.get("summary")
         chapters.append(
-            {"start": start, "title": str(item["title"]).strip(), "summary": str(item.get("summary", "")).strip()}
+            {
+                "start": start,
+                "title": title.strip(),
+                "summary": summary.strip() if isinstance(summary, str) else "",
+            }
         )
     chapters.sort(key=lambda c: c["start"])
     if chapters:
@@ -56,7 +68,9 @@ def parse_outline(raw: str, duration: float) -> list[dict]:
 
 
 def generate_outline(llm: LLM, segments: list[Segment], title: str, duration: float) -> list[dict]:
-    raw = llm.chat(build_outline_messages(segments, title), json_mode=True)
+    if not segments:
+        return []
+    raw =llm.chat(build_outline_messages(segments, title), json_mode=True)
     return parse_outline(raw, duration)
 
 
