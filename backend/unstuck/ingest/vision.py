@@ -1,6 +1,7 @@
 import logging
 import time
 from collections.abc import Callable
+from functools import partial
 from pathlib import Path
 
 from unstuck.jsonfix import loads_lenient
@@ -20,6 +21,8 @@ Return ONLY a JSON object with exactly these keys:
 - "ocr_text": all readable on-screen text; write formulas in LaTeX and keep code exactly as shown; "" if none
 - "change_note": what changed compared with the previous frame; "" if nothing notable
 
+Your reply must be valid JSON: escape every backslash inside strings (for example "\\\\frac" for \\frac).
+
 Previous frame summary: {previous}"""
 
 
@@ -27,17 +30,29 @@ def build_vision_prompt(previous_summary: str) -> str:
     return VISION_PROMPT.format(previous=previous_summary or "(none, this is the first frame)")
 
 
+def _text_field(obj: dict, key: str) -> str:
+    value = obj.get(key)
+    return "" if value is None else str(value)
+
+
 def parse_vision_output(raw: str) -> FrameDescription:
     obj = loads_lenient(raw)
     if not isinstance(obj, dict) or not any(key in obj for key in _FIELDS):
         return FrameDescription(kind="other", summary=raw.strip()[:2000], ocr_text="", change_note="")
-    kind = str(obj.get("kind", "other")).strip().lower()
+    kind = _text_field(obj, "kind").strip().lower()
     return FrameDescription(
         kind=kind if kind in KINDS else "other",
-        summary=str(obj.get("summary", "")).strip(),
-        ocr_text=str(obj.get("ocr_text", "")).strip(),
-        change_note=str(obj.get("change_note", "")).strip(),
+        summary=_text_field(obj, "summary").strip(),
+        ocr_text=_text_field(obj, "ocr_text").strip("\n").rstrip(),
+        change_note=_text_field(obj, "change_note").strip(),
     )
+
+
+def _describe_once(llm: LLM, prompt: str, image_path: Path) -> str:
+    raw = llm.vision(prompt, image_path)
+    if not raw or not raw.strip():
+        raise ValueError("empty vision reply")
+    return raw
 
 
 def describe_pending(
@@ -62,7 +77,7 @@ def describe_pending(
         prompt = build_vision_prompt(previous)
         try:
             raw = with_retry(
-                lambda: llm.vision(prompt, Path(frame.image_path)),
+                partial(_describe_once, llm, prompt, Path(frame.image_path)),
                 attempts=attempts, base_delay=base_delay, sleep=sleep,
             )
         except Exception:

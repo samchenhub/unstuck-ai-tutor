@@ -65,3 +65,25 @@ def test_one_failing_frame_does_not_stop_the_rest():
     assert failed == 1
     assert saved[1] is None
     assert saved[2].summary == "Agenda"
+
+
+def test_null_fields_become_empty_strings():
+    d = parse_vision_output('{"kind": "slide", "summary": "Agenda", "ocr_text": null, "change_note": null}')
+    assert d.ocr_text == ""
+    assert d.change_note == ""
+
+
+def test_ocr_text_keeps_leading_indentation():
+    d = parse_vision_output('{"kind": "code", "summary": "s", "ocr_text": "    return x\\n", "change_note": ""}')
+    assert d.ocr_text == "    return x"
+
+
+def test_blank_reply_is_a_failure_after_retries():
+    frames = [make_keyframe(1, 1.0, status="pending")]
+    llm = FakeLLM(vision_responses=["", "  "])
+    saved = {}
+
+    failed = describe_pending(llm, frames, saved.__setitem__, attempts=2, sleep=lambda s: None)
+
+    assert failed == 1
+    assert saved[1] is None
