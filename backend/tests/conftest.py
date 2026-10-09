@@ -1,3 +1,6 @@
+import shutil
+import subprocess
+
 import pytest
 
 from unstuck.config import Settings
@@ -30,3 +33,17 @@ def conn(settings):
 @pytest.fixture
 def fake_llm(settings):
     return FakeLLM(embed_dim=settings.embed_dim)
+
+
+@pytest.fixture(scope="session")
+def sample_video(tmp_path_factory):
+    """A 3-second generated test video; tests using it are skipped without ffmpeg."""
+    if shutil.which("ffmpeg") is None:
+        pytest.skip("ffmpeg not installed")
+    out = tmp_path_factory.mktemp("media") / "video.mp4"
+    subprocess.run(
+        ["ffmpeg", "-y", "-loglevel", "error", "-f", "lavfi",
+         "-i", "testsrc=duration=3:size=320x240:rate=10", "-pix_fmt", "yuv420p", str(out)],
+        check=True,
+    )
+    return out
