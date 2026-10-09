@@ -13,7 +13,17 @@ RETRIEVE_K = 3
 HISTORY_MESSAGES = 12  # 6 rounds of question + answer
 TOKEN_BUDGET = 6000
 
-_DATA_TAG_RE = re.compile(r"<\s*/?\s*video_data\s*>", re.I)
+_DATA_TAG_RE = re.compile(r"[<＜]\s*/?\s*video_data", re.I)
+
+# Code point ranges counted as one token per character (inclusive bounds).
+_CJK_RANGES = (
+    ("\u3000", "\u303f"),  # CJK symbols and punctuation
+    ("\u3040", "\u30ff"),  # hiragana and katakana
+    ("\u3400", "\u4dbf"),  # CJK unified ideographs extension A
+    ("\u4e00", "\u9fff"),  # CJK unified ideographs
+    ("\uac00", "\ud7af"),  # hangul syllables
+    ("\uff00", "\uffef"),  # halfwidth and fullwidth forms
+)
 
 
 @dataclass(frozen=True)
@@ -43,7 +53,7 @@ class BuiltContext:
 
 
 def _is_cjk(ch: str) -> bool:
-    return "一" <= ch <= "鿿" or "぀" <= ch <= "ヿ" or "가" <= ch <= "힯"
+    return any(lo <= ch <= hi for lo, hi in _CJK_RANGES)
 
 
 def estimate_tokens(text: str) -> int:
@@ -145,7 +155,7 @@ def build_context(inp: ContextInput, budget: int = TOKEN_BUDGET) -> BuiltContext
         ) if b
     )
     retrieved = list(inp.retrieved)
-    history = list(inp.history)
+    history = list(inp.history[-HISTORY_MESSAGES:])
 
     def total() -> int:
         return (
@@ -157,6 +167,8 @@ def build_context(inp: ContextInput, budget: int = TOKEN_BUDGET) -> BuiltContext
     while total() > budget and retrieved:
         retrieved.pop()
     while total() > budget and history:
+        history.pop(0)
+    while history and history[0].role != "user":
         history.pop(0)
 
     body = "\n\n".join(b for b in (fixed, _retrieved_block(retrieved, inp.t)) if b)
