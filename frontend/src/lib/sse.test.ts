@@ -22,4 +22,16 @@ describe('SSEParser', () => {
       { type: 'delta', text: 'c' },
     ])
   })
+
+  it('handles a CRLF pair split across chunks', () => {
+    const parser = new SSEParser()
+    expect(parser.push('data: {"type":"delta","text":"x"}\r\n\r')).toEqual([])
+    expect(parser.push('\n')).toEqual([{ type: 'delta', text: 'x' }])
+  })
+
+  it('skips a malformed block without dropping other events in the chunk', () => {
+    expect(new SSEParser().push('data: {bad\n\ndata: {"type":"delta","text":"ok"}\n\n')).toEqual([
+      { type: 'delta', text: 'ok' },
+    ])
+  })
 })

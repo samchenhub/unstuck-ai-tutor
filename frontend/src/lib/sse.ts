@@ -8,7 +8,8 @@ export class SSEParser {
   private buffer = ''
 
   push(chunk: string): AskEvent[] {
-    this.buffer += chunk.replace(/\r\n/g, '\n')
+    // Normalise on the accumulated buffer so a CRLF split across chunks ("\r" | "\n") still matches.
+    this.buffer = (this.buffer + chunk).replace(/\r\n/g, '\n')
     const events: AskEvent[] = []
     let end = this.buffer.indexOf('\n\n')
     while (end !== -1) {
@@ -19,7 +20,13 @@ export class SSEParser {
         .filter((line) => line.startsWith('data:'))
         .map((line) => line.slice(5).trimStart())
         .join('\n')
-      if (data) events.push(JSON.parse(data) as AskEvent)
+      if (data) {
+        try {
+          events.push(JSON.parse(data) as AskEvent)
+        } catch {
+          // Skip only this malformed block; keep the rest of the chunk's events.
+        }
+      }
       end = this.buffer.indexOf('\n\n')
     }
     return events
