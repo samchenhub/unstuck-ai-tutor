@@ -112,3 +112,9 @@
 - **原因**：yt-dlp 的 `cookiesfrombrowser` 是惰性的——创建 `YoutubeDL` 时不读 cookie，第一次 `urlopen` 才读，失败时抛 `CookieLoadError`（`YoutubeDLError` 的子类），所以只在构造处捕获没用。另外 cookie 在进程内只读一次，用户在 Chrome 登录后刷新页面也不会生效。
 - **解决**：在 `_ydl_fetch_json` 里捕获 `CookieLoadError`，记一次警告，置 `cookies_unavailable`，丢弃当前 `YoutubeDL`，不带 cookie 重建后重试；`ydl_options()` 同步去掉 `cookiesfrombrowser`，下载也随之降级为游客。`is_logged_in(force=True)`（状态接口使用）会丢弃 cookie jar 并重新读取，登录后刷新即可生效。
 - **代码**：`backend/unstuck/sources/bilibili/client.py`（`_ydl_fetch_json`、`is_logged_in`）
+
+### 18. ffmpeg 拉 B站视频流截帧返回 403
+- **问题**：本地没有下载视频时，直接用 `ffmpeg -ss … -i <B站 mp4 地址>` 截实时画面，报 `Server returned 403 Forbidden`；而浏览器 `<video>` 播放同一地址正常。
+- **原因**：B站 CDN 拒绝 ffmpeg 默认的 User-Agent（`Lavf/…`），带浏览器 UA 的请求才放行。
+- **解决**：`extract_frame` 新增可选 `headers` 参数，在 `-i` 之前加上 `-user_agent` 和 `-headers`（Referer 等）；`live_frame_description` 对在线流传入 B站的浏览器 UA + Referer，本地文件仍不带任何头。
+- **代码**：`backend/unstuck/media.py`、`backend/unstuck/tutor/frame.py`

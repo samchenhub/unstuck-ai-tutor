@@ -7,6 +7,7 @@ from unstuck.config import Settings
 from unstuck.db import repo
 from unstuck.ingest import files
 from unstuck.llm.base import LLM
+from unstuck.sources.bilibili.client import HEADERS as STREAM_HEADERS
 
 log = logging.getLogger(__name__)
 
@@ -29,7 +30,9 @@ def live_frame_description(
         return None
     image = video_dir / "live" / f"{second}.jpg"
     try:
-        media.extract_frame(frame_input, float(second), image)
+        # Bilibili's CDN answers 403 to ffmpeg's default User-Agent; local files need no headers.
+        extra = {"headers": STREAM_HEADERS} if isinstance(frame_input, str) else {}
+        media.extract_frame(frame_input, float(second), image, **extra)
         description = llm.vision(LIVE_FRAME_PROMPT.format(question=question), image, attempts=2).strip()
     except Exception:
         log.warning("live frame failed for %s at %ss", video_id, second, exc_info=True)

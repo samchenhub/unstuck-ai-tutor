@@ -1,6 +1,6 @@
 import shutil
 
-from unstuck import sources
+from unstuck import media, sources
 from unstuck.db import repo
 from unstuck.llm import FakeLLM
 from unstuck.sources.base import Playback
@@ -68,3 +68,38 @@ def test_bilibili_without_local_file_uses_stream_url(conn, settings, sample_vide
 def test_youtube_without_local_file_still_returns_none(conn, settings):
     repo.insert_video(conn, VID, "u")
     assert live_frame_description(conn, FakeLLM(), settings, VID, 1.0, "q") is None
+
+
+def _record_extract(monkeypatch):
+    calls = []
+
+    def fake(video, t, out_path, **kwargs):
+        calls.append((video, kwargs))
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        out_path.write_bytes(b"jpg")
+        return out_path
+
+    monkeypatch.setattr("unstuck.tutor.frame.media.extract_frame", fake)
+    return calls
+
+
+def test_stream_capture_sends_browser_headers(conn, settings, monkeypatch):
+    from unstuck.sources.bilibili.client import HEADERS
+
+    repo.insert_video(conn, "BV1Ex4y1G7nG_p1", "u", source="bilibili", course_id="BV1Ex4y1G7nG", part=1)
+
+    class StreamSource:
+        def playback(self, video_id, quality=720):
+            return Playback(kind="mp4", url="https://upos.bilivideo.com/v.mp4")
+
+    monkeypatch.setattr(sources, "for_video", lambda video, s: StreamSource())
+    calls = _record_extract(monkeypatch)
+    live_frame_description(conn, FakeLLM(vision_responses=["x"]), settings, "BV1Ex4y1G7nG_p1", 1.0, "q")
+    assert calls == [("https://upos.bilivideo.com/v.mp4", {"headers": HEADERS})]
+
+
+def test_local_file_capture_sends_no_headers(conn, settings, sample_video, monkeypatch):
+    install_video(settings, sample_video)
+    calls = _record_extract(monkeypatch)
+    live_frame_description(conn, FakeLLM(vision_responses=["x"]), settings, VID, 1.0, "q")
+    assert len(calls) == 1 and calls[0][1] == {}
