@@ -102,6 +102,7 @@ export function ChatPanel({ video, player }: Props) {
     player.current?.pause()
     const t = player.current?.getCurrentTime() ?? 0
     const key = newKey()
+    nearBottomRef.current = true
     setInput('')
     setMessages((all) => [
       ...all,
@@ -113,6 +114,7 @@ export function ChatPanel({ video, player }: Props) {
 
   const regenerate = (message: UiMessage) => {
     if (busy || !message.question || message.t === null) return
+    nearBottomRef.current = true
     update(message.key, (m) => ({ ...m, content: '', status: 'streaming', error: undefined }))
     void run(message.question, message.t, message.key)
   }
