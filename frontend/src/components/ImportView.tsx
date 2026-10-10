@@ -35,8 +35,8 @@ export function ImportForm({ onImported }: { onImported: (id: string) => void })
       <input
         value={url}
         onChange={(event) => setUrl(event.target.value)}
-        placeholder="粘贴 YouTube 视频链接"
-        aria-label="YouTube 视频链接"
+        placeholder="粘贴 YouTube 或 B站视频链接"
+        aria-label="YouTube 或 B站视频链接"
       />
       <button type="submit" className="btn" disabled={busy || !url.trim()}>
         {busy ? '导入中…' : '导入'}

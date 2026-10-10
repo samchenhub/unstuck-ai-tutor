@@ -178,14 +178,7 @@ button:disabled {
   text-align: left;
 }
 
-.video-card img {
-  width: 100%;
-  aspect-ratio: 16 / 9;
-  object-fit: cover;
-  background: var(--surface-2);
-}
-
-.video-card > span {
+.video-card > span:not(.thumb) {
   padding: 0 12px;
 }
 
@@ -470,4 +463,79 @@ button:disabled {
   background: var(--surface-2);
   color: var(--muted);
   text-align: center;
+}
+
+.thumb {
+  position: relative;
+  display: block;
+}
+
+.thumb img {
+  display: block;
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  object-fit: cover;
+  background: var(--surface-2);
+}
+
+.badge {
+  position: absolute;
+  top: 8px;
+  left: 8px;
+  padding: 1px 6px;
+  border-radius: 4px;
+  font-size: 12px;
+  font-weight: 600;
+  color: #fff;
+}
+
+.badge-youtube {
+  background: #c4302b;
+}
+
+.badge-bilibili {
+  background: #00a1d6;
+}
+
+.notice.warning {
+  margin: 0 0 24px;
+  color: var(--text);
+  background: color-mix(in srgb, #f5b301 22%, var(--surface));
+}
+
+.parts h2 {
+  margin: 20px 0 6px;
+  font-size: 16px;
+}
+
+.parts ol {
+  display: grid;
+  gap: 4px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.parts li {
+  display: grid;
+  grid-template-columns: 48px minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 8px;
+  border-radius: 6px;
+}
+
+.parts li.current {
+  background: var(--surface-2);
+}
+
+.parts .ts {
+  color: var(--accent);
+  font-variant-numeric: tabular-nums;
+}
+
+.parts .part-title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }

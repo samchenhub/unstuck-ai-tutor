@@ -9,6 +9,7 @@ export const BiliPlayer = forwardRef<PlayerHandle, { videoId: string }>(function
   const videoRef = useRef<HTMLVideoElement>(null)
   const resumeAt = useRef<number | null>(null)
   const refreshes = useRef(0)
+  const wasPlaying = useRef(false)
   const [src, setSrc] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
 
@@ -38,7 +39,9 @@ export const BiliPlayer = forwardRef<PlayerHandle, { videoId: string }>(function
       return
     }
     refreshes.current += 1
-    void load(videoRef.current?.currentTime ?? 0)
+    // A pending resume means the last refresh hasn't loaded yet; currentTime is 0 after a src swap, so keep the saved one.
+    if (resumeAt.current === null) wasPlaying.current = !(videoRef.current?.paused ?? true)
+    void load(resumeAt.current ?? videoRef.current?.currentTime ?? 0)
   }
 
   const onLoadedMetadata = () => {
@@ -46,7 +49,7 @@ export const BiliPlayer = forwardRef<PlayerHandle, { videoId: string }>(function
     if (video && resumeAt.current !== null) {
       video.currentTime = resumeAt.current
       resumeAt.current = null
-      void video.play().catch(() => {})
+      if (wasPlaying.current) void video.play().catch(() => {})
     }
   }
 

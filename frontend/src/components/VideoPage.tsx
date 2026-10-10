@@ -3,6 +3,7 @@ import { api, type Chapter, type Video } from '../lib/api'
 import { formatTime } from '../lib/timestamps'
 import { ChatPanel } from './ChatPanel'
 import { ImportProgress } from './ImportView'
+import { PartsList } from './PartsList'
 import { Player, type PlayerHandle } from './Player'
 
 const POLL_MS = 2000
@@ -76,11 +77,17 @@ export function VideoPage({ videoId }: { videoId: string }) {
         {video && (
           <>
             <h1 className="video-heading">{video.title || videoId}</h1>
+            {video.parts_total > 1 && (
+              <p className="muted">
+                P{video.part} · {video.part_title}
+              </p>
+            )}
             {video.channel && <p className="muted">{video.channel}</p>}
             {(video.status !== 'ready' || hasFailure) && <ImportProgress video={video} onRetry={retry} />}
             {video.outline && video.outline.length > 0 && (
               <Outline chapters={video.outline} onSeek={(seconds) => playerRef.current?.seekTo(seconds)} />
             )}
+            {video.source === 'bilibili' && video.parts_total > 1 && <PartsList video={video} />}
           </>
         )}
       </section>
