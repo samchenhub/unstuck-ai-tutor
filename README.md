@@ -37,17 +37,22 @@ FastAPI · SQLite + sqlite-vec · yt-dlp · ffmpeg · PySceneDetect · faster-wh
 
 Prerequisites: [uv](https://docs.astral.sh/uv/), Node 20.19+ (required by Vite 8), ffmpeg (`brew install uv node ffmpeg`), and a Zhipu API key from open.bigmodel.cn.
 
+One step: double-click `Unstuck.command` in Finder, or run
+
 ```bash
-cd backend
-cp .env.example .env        # put your key in LLM_API_KEY
-uv sync
-uv run uvicorn unstuck.api.app:create_app --factory --port 8000
+./start.sh
+```
+
+It installs missing dependencies, starts the backend (:8000) and frontend (:5173), and opens http://localhost:5173. Press Ctrl+C or close the window to stop both. On the first run it creates `backend/.env` from `.env.example`; put your key in `LLM_API_KEY` and run it again.
+
+To run the two servers separately instead:
+
+```bash
+cd backend && uv sync && uv run uvicorn unstuck.api.app:create_app --factory --port 8000
 ```
 
 ```bash
-cd frontend
-npm install
-npm run dev                 # http://localhost:5173
+cd frontend && npm install && npm run dev
 ```
 
 The backend loads the bge-m3 embedding model in a background thread at startup, so the first import does not pay for it (the first run downloads ~2 GB). Videos without captions also download a Whisper model (`WHISPER_MODEL`, default `small`).
