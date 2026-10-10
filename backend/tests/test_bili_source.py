@@ -86,6 +86,34 @@ def test_downloads_use_cookies_and_part_url(monkeypatch, tmp_path):
     assert url == f"https://www.bilibili.com/video/{BV}?p=2"
 
 
+def test_downloads_are_chunked_with_backoff_retries(monkeypatch, tmp_path):
+    captured = []
+
+    class FakeYDL:
+        def __init__(self, opts):
+            captured.append(opts)
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+        def extract_info(self, url, download):
+            return {"ext": "m4a"}
+
+        def prepare_filename(self, info):
+            return str(tmp_path / "audio.m4a")
+
+    monkeypatch.setattr("unstuck.sources.bilibili.source.YoutubeDL", FakeYDL)
+    source(base_routes(GOOD_SUB)).download_audio(f"{BV}_p1", tmp_path)
+    opts = captured[0]
+    assert opts["http_chunk_size"] == 1 << 20
+    assert opts["retries"] == 10 and opts["fragment_retries"] == 10
+    sleep = opts["retry_sleep_functions"]["http"]
+    assert [sleep(n) for n in (1, 2, 10)] == [2, 4, 30]
+
+
 def test_download_errors_become_download_failed(monkeypatch, tmp_path):
     from unstuck.errors import IngestError
 

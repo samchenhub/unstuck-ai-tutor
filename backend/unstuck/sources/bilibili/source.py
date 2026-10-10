@@ -21,6 +21,19 @@ _VIDEO_FORMAT = "bv*[height<=720][vcodec^=avc1]/bv*[height<=720]/b[height<=720]/
 _AUDIO_FORMAT = "ba/b"
 
 
+def _http_retry_sleep(n: int) -> float:
+    return min(2 ** n, 30)
+
+
+# B站 CDN cuts long single-connection downloads and rate-limits bursts: fetch in 1 MB ranges, retry with backoff.
+_ROBUST_DOWNLOAD_OPTS = {
+    "http_chunk_size": 1 << 20,
+    "retries": 10,
+    "fragment_retries": 10,
+    "retry_sleep_functions": {"http": _http_retry_sleep},
+}
+
+
 @functools.lru_cache(maxsize=4)
 def _client(cookies_browser: str) -> BiliClient:
     return BiliClient(cookies_browser)
@@ -64,7 +77,7 @@ class BilibiliSource:
     def _download(self, video_id: str, out_dir: Path, fmt: str, stem: str, failure: str) -> Path:
         bvid, part = parse.split_video_id(video_id)
         out_dir.mkdir(parents=True, exist_ok=True)
-        opts = {**self.client.ydl_options(), "format": fmt, "noplaylist": True,
+        opts = {**self.client.ydl_options(), **_ROBUST_DOWNLOAD_OPTS, "format": fmt, "noplaylist": True,
                 "outtmpl": str(out_dir / f"{stem}.%(ext)s")}
         try:
             with YoutubeDL(opts) as ydl:

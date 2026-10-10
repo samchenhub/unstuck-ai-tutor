@@ -118,3 +118,9 @@
 - **原因**：B站 CDN 拒绝 ffmpeg 默认的 User-Agent（`Lavf/…`），带浏览器 UA 的请求才放行。
 - **解决**：`extract_frame` 新增可选 `headers` 参数，在 `-i` 之前加上 `-user_agent` 和 `-headers`（Referer 等）；`live_frame_description` 对在线流传入 B站的浏览器 UA + Referer，本地文件仍不带任何头。
 - **代码**：`backend/unstuck/media.py`、`backend/unstuck/tutor/frame.py`
+
+### 19. B站视频下载中途断开，yt-dlp 默认重试不够
+- **问题**：B站视频/音频下载经常中途断掉（只下了 0.95 MB / 16.5 MB），或者 503、连接被关闭；yt-dlp 默认重试有时 4 分钟才成功，有时直接放弃。
+- **原因**：B站 CDN 会切断长时间的单连接下载，并对短时间内的大量请求限流；浏览器播放不受影响，因为它按片段请求、断了会自动重连。用 ffmpeg 直接拉整个 MP4 也一样被截断，确认不是 yt-dlp 的问题。
+- **解决**：下载时按 1 MB 分段（Range 请求），失败后指数退避重试（2、4、8… 最多 30 秒，最多 10 次）；实测 3 次全部成功，音频 16.5 MB 约 10 秒。
+- **代码**：`backend/unstuck/sources/bilibili/source.py`（`_ROBUST_DOWNLOAD_OPTS`）
