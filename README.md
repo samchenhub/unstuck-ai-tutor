@@ -16,7 +16,7 @@ YouTube URL
          │            └─ captions or Whisper │           │         │          └─ sqlite-vec (bge-m3)
          │                                   │           │         └─ 30–60 s segments cut at sentence ends / scene changes
          │                                   │           └─ GLM vision: kind, summary, OCR (LaTeX/code), change note
-         │                                   └─ scene detection, gaps of 5–45 s, ~1 frame / 10 s on average (max 300), phash dedupe
+         │                                   └─ scene detection (short scenes merged, scenes over 45 s split), thinned to ≤ ~1 frame / 10 s (max 300), phash dedupe
          └─ you can start asking as soon as the transcript is in
 
 Question at second t
@@ -52,7 +52,7 @@ npm run dev                 # http://localhost:5173
 
 The backend loads the bge-m3 embedding model in a background thread at startup, so the first import does not pay for it (the first run downloads ~2 GB). Videos without captions also download a Whisper model (`WHISPER_MODEL`, default `small`).
 
-If a model stays rate-limited, a stage ends with error code `MODEL_BUSY`. Press **重试** (retry) in the UI: only the failed parts re-run, for example just the frames that failed vision.
+If the free-tier model stays rate-limited after the retries, the stage ends with an error: `VISION_PARTIAL` when some frame descriptions failed, or `MODEL_BUSY` when another model-using stage (such as the outline) was refused. Press **重试** (retry) in the UI: finished stages are skipped and only the unfinished or failed parts re-run, for example just the frames that failed vision.
 
 ## Tests
 
