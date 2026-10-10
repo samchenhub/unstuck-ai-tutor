@@ -69,6 +69,9 @@ async function readError(res: Response): Promise<string> {
   } catch {
     // body was not JSON; fall through to the generic message
   }
+  if (res.status === 502 || res.status === 503 || res.status === 504) {
+    return '无法连接到后端服务，请确认后端已启动'
+  }
   return `请求失败（${res.status}）`
 }
 

@@ -2,6 +2,7 @@ import 'katex/dist/katex.min.css'
 import { useMemo } from 'react'
 import ReactMarkdown from 'react-markdown'
 import rehypeKatex from 'rehype-katex'
+import remarkGfm from 'remark-gfm'
 import remarkMath from 'remark-math'
 import { linkifyTimestamps, normalizeMathDelimiters, seekSecondsFromHref } from '../lib/timestamps'
 
@@ -15,9 +16,14 @@ export function Markdown({ text, onSeek }: Props) {
   return (
     <div className="markdown">
       <ReactMarkdown
-        remarkPlugins={[remarkMath]}
+        remarkPlugins={[remarkGfm, remarkMath]}
         rehypePlugins={[rehypeKatex]}
         components={{
+          table: ({ children }) => (
+            <div className="table-scroll">
+              <table>{children}</table>
+            </div>
+          ),
           a: ({ href, children }) => {
             const seconds = href ? seekSecondsFromHref(href) : null
             if (seconds === null) {

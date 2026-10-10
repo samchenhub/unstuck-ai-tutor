@@ -34,15 +34,20 @@ export function VideoPage({ videoId }: { videoId: string }) {
   useEffect(() => {
     let cancelled = false
     let timer: number | undefined
+    let lastStatus: Video['status'] | null = null
     const load = async () => {
       try {
         const next = await api.getVideo(videoId)
         if (cancelled) return
+        lastStatus = next.status
         setVideo(next)
         setError(null)
         if (next.status === 'importing') timer = window.setTimeout(load, POLL_MS)
       } catch (err) {
-        if (!cancelled) setError(err instanceof Error ? err.message : String(err))
+        if (cancelled) return
+        setError(err instanceof Error ? err.message : String(err))
+        // A transient failure must not end polling while the import is running or nothing has loaded yet.
+        if (lastStatus === null || lastStatus === 'importing') timer = window.setTimeout(load, POLL_MS)
       }
     }
     void load()
@@ -80,7 +85,11 @@ export function VideoPage({ videoId }: { videoId: string }) {
         )}
       </section>
       <section className="chat-col">
-        {video ? <ChatPanel video={video} player={playerRef} /> : <div className="muted">加载中…</div>}
+        {video ? (
+          <ChatPanel video={video} player={playerRef} />
+        ) : (
+          !error && <div className="muted">加载中…</div>
+        )}
       </section>
     </main>
   )
