@@ -77,11 +77,11 @@ def extract_keyframes(video_path: Path, duration: float, out_dir: Path) -> list[
     for t in times:
         try:
             path = media.extract_frame(video_path, t, out_dir / f"{int(t * 1000):010d}.jpg")
+            with Image.open(path) as img:
+                phash = str(imagehash.phash(img))
         except Exception:
             log.warning("skipping keyframe at %.1fs", t, exc_info=True)
             continue
-        with Image.open(path) as img:
-            phash = str(imagehash.phash(img))
         candidates.append(NewKeyframe(t=t, image_path=str(path), phash=phash))
 
     kept = dedupe_by_phash(candidates)

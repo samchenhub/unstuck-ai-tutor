@@ -256,3 +256,13 @@ def test_downloads_wrap_errors(monkeypatch, tmp_path, func, message, exc):
     assert err.value.code == "DOWNLOAD_FAILED"
     assert err.value.message == message
     assert err.value.__cause__ is exc
+
+
+@pytest.mark.parametrize(
+    "url",
+    ["http://[::1", "https://www.youtube.com/watch?v=dQw4w9WgXcQ%0A", "https://youtu.be/dQw4w9WgXcQ%0A"],
+)
+def test_parse_video_id_rejects_malformed_and_newline_ids(url):
+    with pytest.raises(IngestError) as err:
+        parse_video_id(url)
+    assert err.value.code == "INVALID_URL"

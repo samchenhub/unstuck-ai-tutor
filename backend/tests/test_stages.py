@@ -127,3 +127,12 @@ def test_default_stages_cover_all():
     from unstuck.ingest.pipeline import STAGES
 
     assert set(stages.DEFAULT_STAGES) == set(STAGES)
+
+
+def test_unexpected_download_error_also_degrades_to_transcript_only(ctx, monkeypatch):
+    def fail(video_id, out_dir):
+        raise RuntimeError("disk exploded")
+
+    monkeypatch.setattr(youtube, "download_video", fail)
+    stages.stage_download(ctx)
+    assert repo.get_video(ctx.conn, VID).visual_mode == "transcript_only"

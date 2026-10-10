@@ -51,3 +51,15 @@ def test_crash_marks_video_failed(settings, fake_llm, conn):
     assert video.status == "failed"
     assert video.error_code == "INTERNAL"
     runner.shutdown()
+
+
+def test_connect_failure_still_releases_the_video(settings, fake_llm, monkeypatch):
+    runner = PipelineRunner(settings, lambda: fake_llm, pipeline=RecordingPipeline())
+
+    def boom(*args, **kwargs):
+        raise RuntimeError("db unavailable")
+
+    monkeypatch.setattr("unstuck.api.runner.connect", boom)
+    runner.submit(VID).result(timeout=5)
+    assert runner.submit(VID) is not None
+    runner.shutdown()

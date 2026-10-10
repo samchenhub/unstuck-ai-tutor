@@ -25,7 +25,7 @@ def build_index(conn: sqlite3.Connection, llm: LLM, video_id: str) -> int:
     vectors: list[list[float]] = []
     for i in range(0, len(texts), EMBED_BATCH):
         vectors.extend(llm.embed(texts[i : i + EMBED_BATCH]))
-    repo.replace_vectors(conn, video_id, [(s.id, v) for s, v in zip(segments, vectors)])
+    repo.replace_vectors(conn, video_id, [(s.id, v) for s, v in zip(segments, vectors, strict=True)])
     return len(segments)
 
 

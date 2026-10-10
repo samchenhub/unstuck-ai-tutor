@@ -49,7 +49,7 @@ def stage_transcript(ctx: StageContext) -> None:
 def stage_download(ctx: StageContext) -> None:
     try:
         youtube.download_video(ctx.video_id, ctx.video_dir)
-    except IngestError:
+    except Exception:
         log.warning("download failed for %s, continuing transcript-only", ctx.video_id, exc_info=True)
         repo.update_video(ctx.conn, ctx.video_id, visual_mode="transcript_only")
         return

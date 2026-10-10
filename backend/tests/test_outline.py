@@ -71,3 +71,19 @@ def test_generate_outline_skips_llm_when_no_segments():
     llm = FakeLLM(chat_responses=['{"chapters": [{"start": 0, "title": "Intro"}]}'])
     assert generate_outline(llm, [], "T", 60) == []
     assert llm.calls == []
+
+
+def test_outline_prompt_caps_transcript_size_and_keeps_stamps():
+    segments = [Segment(i * 20.0, i * 20.0 + 20, f"{i:03d} " + "x" * 296) for i in range(400)]
+    llm = FakeLLM(chat_responses=['{"chapters": []}'])
+
+    generate_outline(llm, segments, title="Long", duration=8000)
+
+    (_name, messages), = llm.calls
+    prompt = messages[-1]["content"]
+    transcript = prompt.split("Transcript:\n", 1)[1]
+    assert len(transcript) <= 24_000
+    assert "[00:00] 000 " in transcript
+    stamps = [line for line in transcript.splitlines() if line.startswith("[")]
+    assert 50 < len(stamps) < 400
+    assert "ignore" in prompt.lower()

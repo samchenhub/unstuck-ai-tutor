@@ -32,17 +32,27 @@ class PipelineRunner:
         return self._executor.submit(self._run, video_id)
 
     def _run(self, video_id: str) -> None:
-        conn = connect(self._settings.db_path, self._settings.embed_dim)
+        conn = None
         try:
+            conn = connect(self._settings.db_path, self._settings.embed_dim)
             ctx = StageContext(conn=conn, llm=self._get_llm(), settings=self._settings, video_id=video_id)
             self._pipeline.run(ctx)
         except Exception as exc:
             log.exception("pipeline crashed for %s", video_id)
-            repo.update_video(conn, video_id, status="failed", error_code="INTERNAL", error_message=f"内部错误：{exc}"[:300])
+            self._mark_failed(conn, video_id, exc)
         finally:
-            conn.close()
+            if conn is not None:
+                conn.close()
             with self._lock:
                 self._running.discard(video_id)
+
+    def _mark_failed(self, conn, video_id: str, exc: Exception) -> None:
+        if conn is None:  # the database itself was unreachable; nothing can be recorded
+            return
+        try:
+            repo.update_video(conn, video_id, status="failed", error_code="INTERNAL", error_message=f"内部错误：{exc}"[:300])
+        except Exception:
+            log.exception("could not record the failure for %s", video_id)
 
     def shutdown(self) -> None:
         self._executor.shutdown(wait=False, cancel_futures=True)

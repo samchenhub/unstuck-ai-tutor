@@ -15,7 +15,7 @@ from unstuck.timefmt import fmt_ts
 
 log = logging.getLogger(__name__)
 
-_ID_RE = re.compile(r"^[A-Za-z0-9_-]{11}$")
+_ID_RE = re.compile(r"[A-Za-z0-9_-]{11}")
 _ID_PATH_PREFIXES = ("shorts", "embed", "live")
 _VIDEO_SUFFIXES = {".mp4", ".webm", ".mkv", ".mov"}
 
@@ -39,10 +39,13 @@ def watch_url(video_id: str) -> str:
 
 def parse_video_id(url: str) -> str:
     text = url.strip()
-    if _ID_RE.match(text):
+    if _ID_RE.fullmatch(text):
         return text
-    parsed = urlparse(text if "://" in text else f"https://{text}")
-    host = (parsed.hostname or "").lower()
+    try:
+        parsed = urlparse(text if "://" in text else f"https://{text}")
+        host = (parsed.hostname or "").lower()
+    except ValueError as exc:
+        raise IngestError("INVALID_URL", "不是有效的 YouTube 视频链接") from exc
     candidate = None
     if host == "youtu.be":
         candidate = parsed.path.strip("/")
@@ -52,7 +55,7 @@ def parse_video_id(url: str) -> str:
             candidate = parts[1]
         elif parts == ["watch"] or not parts:
             candidate = (parse_qs(parsed.query).get("v") or [None])[0]
-    if candidate is None or not _ID_RE.match(candidate):
+    if candidate is None or not _ID_RE.fullmatch(candidate):
         raise IngestError("INVALID_URL", "不是有效的 YouTube 视频链接")
     return candidate
 

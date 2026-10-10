@@ -51,3 +51,23 @@ def test_extract_keyframes_on_real_video(sample_video, tmp_path):
     assert len(frames) == 1  # 3 s video → cap of one frame
     assert (tmp_path / "frames").exists()
     assert len(frames[0].phash) == 16
+
+
+def test_unreadable_frame_is_skipped_not_fatal(tmp_path, monkeypatch):
+    from PIL import Image
+
+    from unstuck.ingest import keyframes
+
+    monkeypatch.setattr(keyframes, "detect_scenes", lambda path: [Scene(0, 30), Scene(30, 60)])
+
+    def fake_extract(video, t, out):
+        out.parent.mkdir(parents=True, exist_ok=True)
+        if t < 10:
+            out.write_bytes(b"not a jpeg")
+        else:
+            Image.new("RGB", (64, 64), "white").save(out, "JPEG")
+        return out
+
+    monkeypatch.setattr(keyframes.media, "extract_frame", fake_extract)
+    frames = extract_keyframes(tmp_path / "v.mp4", duration=60.0, out_dir=tmp_path / "frames")
+    assert [f.t for f in frames] == [31.0]
