@@ -4,7 +4,7 @@ from pathlib import Path
 
 import sqlite_vec
 
-from unstuck.db.schema import SCHEMA, vec_table_sql
+from unstuck.db.schema import SCHEMA, VIDEO_COLUMNS_ADDED, vec_table_sql
 
 
 def connect(db_path: Path, embed_dim: int) -> sqlite3.Connection:
@@ -21,10 +21,24 @@ def connect(db_path: Path, embed_dim: int) -> sqlite3.Connection:
     conn.enable_load_extension(False)
     conn.execute("PRAGMA journal_mode=WAL")
     conn.executescript(SCHEMA)
+    _migrate_videos(conn)
     _check_embed_dim(conn, db_path, embed_dim)
     conn.execute(vec_table_sql(embed_dim))
     conn.commit()
     return conn
+
+
+def _migrate_videos(conn: sqlite3.Connection) -> None:
+    existing = {row["name"] for row in conn.execute("PRAGMA table_info(videos)")}
+    for name, ddl in VIDEO_COLUMNS_ADDED.items():
+        if name in existing:
+            continue
+        try:
+            conn.execute(f"ALTER TABLE videos ADD COLUMN {name} {ddl}")
+        except sqlite3.OperationalError as exc:
+            # Another connection may have added it a moment ago (startup races).
+            if "duplicate column" not in str(exc):
+                raise
 
 
 def _check_embed_dim(conn: sqlite3.Connection, db_path: Path, embed_dim: int) -> None:

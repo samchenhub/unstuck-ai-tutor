@@ -78,3 +78,9 @@ class Video:
     error_code: str | None
     error_message: str | None
     created_at: str
+    source: str = "youtube"
+    course_id: str | None = None
+    part: int | None = None
+    part_title: str = ""
+    parts_total: int = 1
+    thumbnail: str = ""

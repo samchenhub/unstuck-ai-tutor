@@ -18,6 +18,7 @@ class Settings:
     max_duration_s: int = 7200
     llm_disable_thinking: bool = True
     llm_max_concurrency: int = 2
+    bilibili_cookies_browser: str = "chrome"
 
     @property
     def db_path(self) -> Path:
@@ -46,4 +47,5 @@ def load_settings(env_file: bool = True) -> Settings:
         max_duration_s=int(os.getenv("MAX_DURATION_S", "7200")),
         llm_disable_thinking=_flag(os.getenv("LLM_DISABLE_THINKING", "1")),
         llm_max_concurrency=int(os.getenv("LLM_MAX_CONCURRENCY", "2")),
+        bilibili_cookies_browser=os.getenv("BILIBILI_COOKIES_BROWSER", "chrome").strip(),
     )

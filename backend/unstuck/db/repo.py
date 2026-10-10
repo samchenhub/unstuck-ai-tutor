@@ -8,6 +8,7 @@ from unstuck.models import Chat, Cue, FrameDescription, Keyframe, NewKeyframe, S
 _VIDEO_UPDATABLE = {
     "title", "channel", "duration", "status", "ask_ready", "stage_states",
     "visual_mode", "outline", "error_code", "error_message",
+    "part_title", "parts_total", "thumbnail",
 }
 
 
@@ -28,13 +29,25 @@ def _video(row: sqlite3.Row) -> Video:
         error_code=row["error_code"],
         error_message=row["error_message"],
         created_at=row["created_at"],
+        source=row["source"],
+        course_id=row["course_id"],
+        part=row["part"],
+        part_title=row["part_title"],
+        parts_total=row["parts_total"],
+        thumbnail=row["thumbnail"],
     )
 
 
-def insert_video(conn: sqlite3.Connection, video_id: str, url: str) -> bool:
+def insert_video(
+    conn: sqlite3.Connection, video_id: str, url: str, *,
+    source: str = "youtube", course_id: str | None = None, part: int | None = None,
+) -> bool:
     """Insert a new video row. Returns False if it already existed."""
     with conn:
-        cur = conn.execute("INSERT OR IGNORE INTO videos (id, url) VALUES (?, ?)", (video_id, url))
+        cur = conn.execute(
+            "INSERT OR IGNORE INTO videos (id, url, source, course_id, part) VALUES (?, ?, ?, ?, ?)",
+            (video_id, url, source, course_id, part),
+        )
     return cur.rowcount == 1
 
 

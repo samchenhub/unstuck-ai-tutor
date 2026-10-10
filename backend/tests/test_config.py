@@ -36,3 +36,11 @@ def test_env_overrides(monkeypatch, tmp_path):
     assert s.chat_model == "claude-x"
     assert s.embed_dim == 8
     assert s.llm_disable_thinking is False
+
+
+def test_bilibili_cookie_browser_setting(monkeypatch, tmp_path):
+    monkeypatch.setenv("UNSTUCK_DATA_DIR", str(tmp_path))
+    monkeypatch.delenv("BILIBILI_COOKIES_BROWSER", raising=False)
+    assert load_settings(env_file=False).bilibili_cookies_browser == "chrome"
+    monkeypatch.setenv("BILIBILI_COOKIES_BROWSER", "")
+    assert load_settings(env_file=False).bilibili_cookies_browser == ""

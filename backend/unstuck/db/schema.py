@@ -67,6 +67,16 @@ CREATE TABLE IF NOT EXISTS frame_cache (
 );
 """
 
+# Columns added after Phase 1. connect() adds any that are missing, so old databases keep working.
+VIDEO_COLUMNS_ADDED = {
+    "source": "TEXT NOT NULL DEFAULT 'youtube'",
+    "course_id": "TEXT",
+    "part": "INTEGER",
+    "part_title": "TEXT NOT NULL DEFAULT ''",
+    "parts_total": "INTEGER NOT NULL DEFAULT 1",
+    "thumbnail": "TEXT NOT NULL DEFAULT ''",
+}
+
 
 def vec_table_sql(dim: int) -> str:
     return (
