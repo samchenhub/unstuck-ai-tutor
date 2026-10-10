@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type FormEvent, type KeyboardEvent, type RefObject } from 'react'
+import { useEffect, useRef, useState, type FormEvent, type KeyboardEvent, type RefObject, type UIEvent } from 'react'
 import { api, askStream, type ChatMessage, type Video } from '../lib/api'
 import { formatTime } from '../lib/timestamps'
 import { Markdown } from './Markdown'
@@ -45,10 +45,17 @@ export function ChatPanel({ video, player }: Props) {
   const [input, setInput] = useState('')
   const [busy, setBusy] = useState(false)
   const [loadError, setLoadError] = useState<string | null>(null)
+  const [historyLoaded, setHistoryLoaded] = useState(false)
   const listRef = useRef<HTMLDivElement>(null)
+  const nearBottomRef = useRef(true)
+  const composingRef = useRef(false)
 
   useEffect(() => {
     let cancelled = false
+    setMessages([])
+    setLoadError(null)
+    setHistoryLoaded(false)
+    nearBottomRef.current = true
     api
       .listChats(video.id)
       .then((chats) => {
@@ -57,6 +64,9 @@ export function ChatPanel({ video, player }: Props) {
       .catch((err: unknown) => {
         if (!cancelled) setLoadError(err instanceof Error ? err.message : String(err))
       })
+      .finally(() => {
+        if (!cancelled) setHistoryLoaded(true)
+      })
     return () => {
       cancelled = true
     }
@@ -64,8 +74,13 @@ export function ChatPanel({ video, player }: Props) {
 
   useEffect(() => {
     const list = listRef.current
-    if (list) list.scrollTop = list.scrollHeight
+    if (list && nearBottomRef.current) list.scrollTop = list.scrollHeight
   }, [messages])
+
+  const onListScroll = (event: UIEvent<HTMLDivElement>) => {
+    const list = event.currentTarget
+    nearBottomRef.current = list.scrollHeight - list.scrollTop - list.clientHeight < 80
+  }
 
   const update = (key: string, fn: (m: UiMessage) => UiMessage) =>
     setMessages((all) => all.map((m) => (m.key === key ? fn(m) : m)))
@@ -83,7 +98,7 @@ export function ChatPanel({ video, player }: Props) {
   const submit = (event?: FormEvent) => {
     event?.preventDefault()
     const question = input.trim()
-    if (!question || busy || !video.ask_ready) return
+    if (!question || busy || !historyLoaded || !video.ask_ready) return
     player.current?.pause()
     const t = player.current?.getCurrentTime() ?? 0
     const key = newKey()
@@ -103,7 +118,10 @@ export function ChatPanel({ video, player }: Props) {
   }
 
   const onKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
-    if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) {
+    // Safari fires compositionend before the confirming Enter keydown, so isComposing
+    // can be false here; keyCode 229 and the explicit composition flag cover that case.
+    const composing = composingRef.current || event.nativeEvent.isComposing || event.keyCode === 229
+    if (event.key === 'Enter' && !event.shiftKey && !composing) {
       event.preventDefault()
       submit()
     }
@@ -114,7 +132,7 @@ export function ChatPanel({ video, player }: Props) {
   return (
     <div className="chat">
       {video.visual_mode === 'transcript_only' && <div className="notice">画面理解不可用：这个视频只根据字幕回答</div>}
-      <div className="chat-list" ref={listRef}>
+      <div className="chat-list" ref={listRef} onScroll={onListScroll}>
         {loadError && <div className="notice error">{loadError}</div>}
         {messages.length === 0 && !loadError && (
           <div className="chat-empty">看到哪里不懂，就暂停提问。AI 知道你看到了第几秒，也能看到当前画面。</div>
@@ -156,11 +174,17 @@ export function ChatPanel({ video, player }: Props) {
           onChange={(event) => setInput(event.target.value)}
           onFocus={() => player.current?.pause()}
           onKeyDown={onKeyDown}
+          onCompositionStart={() => {
+            composingRef.current = true
+          }}
+          onCompositionEnd={() => {
+            composingRef.current = false
+          }}
           placeholder={video.ask_ready ? '在这里提问，回车发送，Shift+回车换行' : '字幕还在处理中，马上就可以提问…'}
           disabled={!video.ask_ready}
           rows={3}
         />
-        <button type="submit" className="btn" disabled={busy || !video.ask_ready || !input.trim()}>
+        <button type="submit" className="btn" disabled={busy || !historyLoaded || !video.ask_ready || !input.trim()}>
           提问
         </button>
       </form>
