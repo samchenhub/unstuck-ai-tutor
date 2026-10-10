@@ -27,16 +27,21 @@ def main() -> int:
     conn = connect(settings.db_path, settings.embed_dim)
     items = load_items(args.questions)
 
-    not_ready = sorted({
+    unusable = sorted({
         item.video_id for item in items
-        if (video := repo.get_video(conn, item.video_id)) is None or video.status != "ready"
+        if (video := repo.get_video(conn, item.video_id)) is None
+        or video.status != "ready" or video.visual_mode != "full"
     })
-    if not_ready:
-        print(f"Import these videos first (status must be 'ready'): {', '.join(not_ready)}", file=sys.stderr)
+    if unusable:
+        print(
+            "These videos must be imported with status 'ready' and visual_mode 'full' "
+            f"(otherwise the 'full' mode silently equals transcript_only): {', '.join(unusable)}",
+            file=sys.stderr,
+        )
         return 1
 
     results = run_eval(conn, build_llm(settings), settings, items)
-    out = args.out or RESULTS_DIR / f"report-{datetime.date.today().isoformat()}.md"
+    out = args.out or RESULTS_DIR / f"report-{datetime.datetime.now():%Y-%m-%d-%H%M}.md"
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(render_report(results, settings.chat_model), encoding="utf-8")
     for mode, score in summarize(results).items():
