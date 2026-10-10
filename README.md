@@ -52,7 +52,7 @@ npm run dev                 # http://localhost:5173
 
 The backend loads the bge-m3 embedding model in a background thread at startup, so the first import does not pay for it (the first run downloads ~2 GB). Videos without captions also download a Whisper model (`WHISPER_MODEL`, default `small`).
 
-If the free-tier model stays rate-limited after the retries, the stage ends with an error: `VISION_PARTIAL` when some frame descriptions failed, or `MODEL_BUSY` when another model-using stage (such as the outline) was refused. Press **重试** (retry) in the UI: finished stages are skipped and only the unfinished or failed parts re-run, for example just the frames that failed vision.
+If the free-tier model stays rate-limited after the retries, the stage ends with `MODEL_BUSY`; during frame understanding it stops at once and the frames not yet described stay pending. `VISION_PARTIAL` now only means some frame descriptions failed for other reasons. Press **重试** (retry) in the UI: finished stages are skipped and only the unfinished or failed parts re-run, for example just the frames that are still pending or failed vision.
 
 ## Tests
 
