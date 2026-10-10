@@ -1,0 +1,13 @@
+[
+  {
+    "id": "la-01",
+    "video_id": "<11-char YouTube id>",
+    "t": "03:35",
+    "question": "这个矩阵乘出来为什么是这个结果？",
+    "key_points": [
+      "points out the specific matrix shown on screen",
+      "explains row-times-column multiplication",
+      "gives the resulting entries correctly"
+    ]
+  }
+]
