@@ -1,5 +1,6 @@
 import json
 import logging
+import threading
 from collections.abc import Iterator
 from contextlib import asynccontextmanager
 from dataclasses import asdict
@@ -50,6 +51,13 @@ def create_app(settings: Settings | None = None, llm: LLM | None = None, runner=
 
     runner = runner or PipelineRunner(settings, get_llm)
 
+    def warm_up_embeddings() -> None:
+        # Loading the embedding model lazily made the first question wait ~30 s.
+        try:
+            get_llm().embed(["warmup"])
+        except Exception:
+            log.warning("embedding warm-up failed", exc_info=True)
+
     @asynccontextmanager
     async def lifespan(_app: FastAPI):
         conn = connect(settings.db_path, settings.embed_dim)
@@ -59,6 +67,7 @@ def create_app(settings: Settings | None = None, llm: LLM | None = None, runner=
                     runner.submit(video.id)
         finally:
             conn.close()
+        threading.Thread(target=warm_up_embeddings, name="embed-warmup", daemon=True).start()
         yield
         runner.shutdown()
 

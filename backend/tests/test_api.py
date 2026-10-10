@@ -1,4 +1,5 @@
 import json
+import time
 
 import pytest
 from fastapi.testclient import TestClient
@@ -31,6 +32,13 @@ def client(settings, fake_llm, runner):
 
 def sse_events(text):
     return [json.loads(block[len("data: "):]) for block in text.split("\n\n") if block.startswith("data: ")]
+
+
+def test_startup_warms_up_the_embedding_model(client, fake_llm):
+    deadline = time.monotonic() + 2
+    while ("embed", ["warmup"]) not in fake_llm.calls and time.monotonic() < deadline:
+        time.sleep(0.01)
+    assert ("embed", ["warmup"]) in fake_llm.calls
 
 
 def test_health(client):
