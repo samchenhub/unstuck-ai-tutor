@@ -124,3 +124,9 @@
 - **原因**：B站 CDN 会切断长时间的单连接下载，并对短时间内的大量请求限流；浏览器播放不受影响，因为它按片段请求、断了会自动重连。用 ffmpeg 直接拉整个 MP4 也一样被截断，确认不是 yt-dlp 的问题。
 - **解决**：下载时按 1 MB 分段（Range 请求），失败后指数退避重试（2、4、8… 最多 30 秒，最多 10 次）；实测 3 次全部成功，音频 16.5 MB 约 10 秒。
 - **代码**：`backend/unstuck/sources/bilibili/source.py`（`_ROBUST_DOWNLOAD_OPTS`）
+
+### 20. 没有字幕的 B站视频，本地语音转写直接报错，且结果是繁体字
+- **问题**：没有字幕的 B站视频，语音转写阶段直接报错 `open() got an unexpected keyword argument 'metadata_errors'`；绕过之后，转写结果是繁体字，还有错字。
+- **原因**：第一阶段测试过的视频都有字幕，本地转写从没真正跑过；faster-whisper 1.2.1 解码音频时调用的 PyAV 参数 `metadata_errors` 在 PyAV 19 中已被移除。Whisper small 对普通话常输出繁体。
+- **解决**：自己用 ffmpeg 把音频解码成 16 kHz 单声道波形（681 秒音频约 0.4 秒）再交给 Whisper，彻底绕开 PyAV；先用 `detect_language` 检测语言，检测到中文时加上简体中文提示词（`initial_prompt`）并固定 `language="zh"`。
+- **代码**：`backend/unstuck/ingest/transcribe.py`
