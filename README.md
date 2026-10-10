@@ -2,7 +2,7 @@
 
 > *Stuck on a video? Pause and ask.*
 
-Unstuck is a one-on-one AI tutor that sits next to a YouTube lecture. Pause anywhere and ask a question: the tutor knows **which second you are at** and **what is on screen** (formulas, code, diagrams, slides), explains with the video's own content, and answers with clickable `[mm:ss]` timestamps and rendered LaTeX.
+Unstuck is a one-on-one AI tutor that sits next to a YouTube **or Bilibili** lecture. Pause anywhere and ask a question: the tutor knows **which second you are at** and **what is on screen** (formulas, code, diagrams, slides), explains with the video's own content, and answers with clickable `[mm:ss]` timestamps and rendered LaTeX.
 
 Products I looked at only read the transcript; research systems understand frames but don't know where the viewer is. Unstuck combines both at the pause point.
 
@@ -58,6 +58,14 @@ cd frontend && npm install && npm run dev
 The backend loads the bge-m3 embedding model in a background thread at startup, so the first import does not pay for it (the first run downloads ~2 GB). Videos without captions also download a Whisper model (`WHISPER_MODEL`, default `small`).
 
 If the free-tier model stays rate-limited after the retries, the stage ends with `MODEL_BUSY`; during frame understanding it stops at once and the frames not yet described stay pending. `VISION_PARTIAL` now only means some frame descriptions failed for other reasons. Press **重试** (retry) in the UI: finished stages are skipped and only the unfinished or failed parts re-run, for example just the frames that are still pending or failed vision.
+
+## Bilibili
+
+Paste a `bilibili.com/video/BV…` link (or a `b23.tv` share link). Multi-part courses import one part at a time; the video page lists the other parts with an import button.
+
+Unstuck reads your Bilibili login from Chrome (`BILIBILI_COOKIES_BROWSER` in `backend/.env`; macOS asks once for Keychain access to "Chrome Safe Storage"). Logged in, it uses Bilibili's subtitles (uploader-made or AI-generated) and requests 720p playback; logged out it still works, but transcribes with Whisper and plays at lower quality. Bilibili videos play straight from Bilibili's CDN in the browser's own player, so watching starts immediately.
+
+This relies on Bilibili's unofficial web APIs; it is for personal use and demos.
 
 ## Tests
 
