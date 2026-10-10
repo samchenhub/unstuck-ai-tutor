@@ -1,0 +1,87 @@
+import { useEffect, useRef, useState } from 'react'
+import { api, type Chapter, type Video } from '../lib/api'
+import { formatTime } from '../lib/timestamps'
+import { ChatPanel } from './ChatPanel'
+import { ImportProgress } from './ImportView'
+import { Player, type PlayerHandle } from './Player'
+
+const POLL_MS = 2000
+
+function Outline({ chapters, onSeek }: { chapters: Chapter[]; onSeek: (seconds: number) => void }) {
+  return (
+    <section className="outline">
+      <h2>大纲</h2>
+      <ol>
+        {chapters.map((chapter) => (
+          <li key={chapter.start}>
+            <button type="button" onClick={() => onSeek(chapter.start)}>
+              <span className="ts">{formatTime(chapter.start)}</span>
+              {chapter.title}
+            </button>
+          </li>
+        ))}
+      </ol>
+    </section>
+  )
+}
+
+export function VideoPage({ videoId }: { videoId: string }) {
+  const [video, setVideo] = useState<Video | null>(null)
+  const [error, setError] = useState<string | null>(null)
+  const [pollKey, setPollKey] = useState(0)
+  const playerRef = useRef<PlayerHandle>(null)
+
+  useEffect(() => {
+    let cancelled = false
+    let timer: number | undefined
+    const load = async () => {
+      try {
+        const next = await api.getVideo(videoId)
+        if (cancelled) return
+        setVideo(next)
+        setError(null)
+        if (next.status === 'importing') timer = window.setTimeout(load, POLL_MS)
+      } catch (err) {
+        if (!cancelled) setError(err instanceof Error ? err.message : String(err))
+      }
+    }
+    void load()
+    return () => {
+      cancelled = true
+      window.clearTimeout(timer)
+    }
+  }, [videoId, pollKey])
+
+  const retry = async () => {
+    try {
+      setVideo(await api.retry(videoId))
+      setPollKey((k) => k + 1)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err))
+    }
+  }
+
+  const hasFailure = video ? Object.values(video.stage_states).includes('failed') : false
+
+  return (
+    <main className="video-page">
+      <section className="video-col">
+        <Player ref={playerRef} videoId={videoId} />
+        {error && <div className="form-error">{error}</div>}
+        {video && (
+          <>
+            <h1 className="video-heading">{video.title || videoId}</h1>
+            {video.channel && <p className="muted">{video.channel}</p>}
+            {(video.status !== 'ready' || hasFailure) && <ImportProgress video={video} onRetry={retry} />}
+            {video.outline && video.outline.length > 0 && (
+              <Outline chapters={video.outline} onSeek={(seconds) => playerRef.current?.seekTo(seconds)} />
+            )}
+          </>
+        )}
+      </section>
+      <section className="chat-col">
+        {video ? <ChatPanel video={video} player={playerRef} /> : <div className="muted">加载中…</div>}
+      </section>
+    </main>
+  )
+}
