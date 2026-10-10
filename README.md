@@ -71,3 +71,4 @@ cd frontend && npm test
 - yt-dlp downloads are for personal use and demos. YouTube often blocks server IPs, so Unstuck runs locally only.
 - Free vision models can misread complex formulas; switch `VISION_MODEL` to a stronger model if needed.
 - Videos longer than 2 hours are rejected.
+- On macOS you may see an `objc ... AVFFrameReceiver is implemented in both` warning at start-up. opencv and PyAV each bundle FFmpeg; it is harmless because Unstuck never opens capture devices.

@@ -16,3 +16,5 @@ Question: does seeing the screen make the tutor's answers better?
 
 - The judge is the same free model as the tutor, so absolute numbers are noisy. Compare the two modes against each other, not against other systems.
 - About 20 items is a small sample: treat a gap of a few points as noise and look at the per-question table for clear wins and losses.
+- Retrieval ranking in the `transcript_only` arm uses embeddings that include frame text, so visual information can still influence which segments are retrieved (though not the content passed to the model).
+- The `full` arm may reuse cached live-frame descriptions (`frame_cache`) produced for earlier questions at the same second, so those descriptions were written for a different question.

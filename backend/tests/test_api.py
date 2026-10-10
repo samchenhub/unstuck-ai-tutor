@@ -146,3 +146,11 @@ def test_get_llm_builds_the_real_llm_exactly_once_across_threads(settings, runne
         t.join()
     assert len(built) == 1
     assert len(results) == 6 and all(r is built[0] for r in results)
+
+
+def test_startup_warns_when_ffmpeg_is_missing(settings, fake_llm, runner, monkeypatch, caplog):
+    monkeypatch.setattr("unstuck.api.app.shutil.which", lambda name: None)
+    with caplog.at_level("WARNING"):
+        with TestClient(create_app(settings=settings, llm=fake_llm, runner=runner)):
+            pass
+    assert "ffmpeg 未安装" in caplog.text

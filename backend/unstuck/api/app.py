@@ -1,5 +1,6 @@
 import json
 import logging
+import shutil
 import threading
 from collections.abc import Iterator
 from contextlib import asynccontextmanager
@@ -65,6 +66,8 @@ def create_app(settings: Settings | None = None, llm: LLM | None = None, runner=
 
     @asynccontextmanager
     async def lifespan(_app: FastAPI):
+        if shutil.which("ffmpeg") is None:
+            log.warning("ffmpeg 未安装：无法抽取关键帧和实时截帧")
         conn = connect(settings.db_path, settings.embed_dim)
         try:
             for video in repo.list_videos(conn):
