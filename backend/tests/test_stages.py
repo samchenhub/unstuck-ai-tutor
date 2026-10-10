@@ -8,6 +8,7 @@ from unstuck.ingest import stages, vision, youtube
 from unstuck.ingest.pipeline import SKIPPED, StageContext
 from unstuck.llm import FakeLLM
 from unstuck.models import Cue, NewKeyframe, Segment
+from unstuck.sources.base import VideoMeta
 
 VID = "abcdefghijk"
 
@@ -136,3 +137,41 @@ def test_unexpected_download_error_also_degrades_to_transcript_only(ctx, monkeyp
     monkeypatch.setattr(youtube, "download_video", fail)
     stages.stage_download(ctx)
     assert repo.get_video(ctx.conn, VID).visual_mode == "transcript_only"
+
+
+class FakeSource:
+    name = "fake"
+
+    def __init__(self):
+        self.downloaded = []
+
+    def fetch_info(self, video_id):
+        return {"id": video_id, "duration": 60}
+
+    def check_info(self, info, max_duration_s):
+        return VideoMeta(title="课程", channel="UP", duration=60.0, part_title="第一集", parts_total=3, thumbnail="https://x/y.jpg")
+
+    def fetch_captions(self, info):
+        return [Cue(i * 5.0, (i + 1) * 5.0, f"第{i}句。") for i in range(12)]
+
+    def download_video(self, video_id, out_dir):
+        self.downloaded.append(video_id)
+        return out_dir / "video.mp4"
+
+    def download_audio(self, video_id, out_dir):
+        raise AssertionError("captions exist; audio must not be downloaded")
+
+
+def test_stages_use_the_videos_source(ctx, monkeypatch):
+    fake = FakeSource()
+    monkeypatch.setattr(stages.sources, "for_video", lambda video, settings: fake)
+
+    stages.stage_metadata(ctx)
+    video = repo.get_video(ctx.conn, VID)
+    assert (video.title, video.part_title, video.parts_total, video.thumbnail) == ("课程", "第一集", 3, "https://x/y.jpg")
+
+    stages.stage_transcript(ctx)
+    assert len(repo.get_cues(ctx.conn, VID)) == 12
+
+    stages.stage_download(ctx)
+    assert fake.downloaded == [VID]

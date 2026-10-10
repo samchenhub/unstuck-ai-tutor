@@ -4,7 +4,7 @@ import sqlite3
 from unstuck import media
 from unstuck.config import Settings
 from unstuck.db import repo
-from unstuck.ingest import youtube
+from unstuck.ingest import files
 from unstuck.llm.base import LLM
 
 log = logging.getLogger(__name__)
@@ -23,7 +23,7 @@ def live_frame_description(
         return cached
 
     video_dir = settings.video_dir(video_id)
-    video_path = youtube.find_video_file(video_dir)
+    video_path = files.find_video_file(video_dir)
     if video_path is None:
         return None
     image = video_dir / "live" / f"{second}.jpg"

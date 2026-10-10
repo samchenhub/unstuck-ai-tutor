@@ -10,6 +10,7 @@ from yt_dlp.utils import DownloadError, YoutubeDLError
 
 from unstuck.errors import IngestError
 from unstuck.ingest.captions import parse_json3
+from unstuck.ingest.files import find_video_file, load_info, save_info  # noqa: F401  (re-exported)
 from unstuck.models import Cue
 from unstuck.timefmt import fmt_ts
 
@@ -17,7 +18,6 @@ log = logging.getLogger(__name__)
 
 _ID_RE = re.compile(r"[A-Za-z0-9_-]{11}")
 _ID_PATH_PREFIXES = ("shorts", "embed", "live")
-_VIDEO_SUFFIXES = {".mp4", ".webm", ".mkv", ".mov"}
 
 _QUIET = {"quiet": True, "no_warnings": True, "noprogress": True}
 # Prefer H.264 so OpenCV (scene detection) can always decode it; video-only, no merge needed.
@@ -148,15 +148,6 @@ def fetch_info(video_id: str) -> dict:
         ) from exc
 
 
-def save_info(info: dict, path: Path) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(info, ensure_ascii=False), encoding="utf-8")
-
-
-def load_info(path: Path) -> dict:
-    return json.loads(path.read_text(encoding="utf-8"))
-
-
 def fetch_captions(info: dict) -> list[Cue] | None:
     """Download and parse the chosen caption track; None (never an exception) lets the
     transcript stage fall back to Whisper."""
@@ -191,10 +182,3 @@ def download_video(video_id: str, out_dir: Path) -> Path:
 
 def download_audio(video_id: str, out_dir: Path) -> Path:
     return _download(video_id, out_dir, _AUDIO_FORMAT, "audio", "音频下载失败")
-
-
-def find_video_file(video_dir: Path) -> Path | None:
-    for path in sorted(video_dir.glob("video.*")):
-        if path.suffix in _VIDEO_SUFFIXES and path.is_file():
-            return path
-    return None

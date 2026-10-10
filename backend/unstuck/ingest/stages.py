@@ -1,8 +1,9 @@
 import logging
 
+from unstuck import sources
 from unstuck.db import repo
 from unstuck.errors import IngestError
-from unstuck.ingest import indexer, keyframes, outline, timeline, transcribe, vision, youtube
+from unstuck.ingest import files, indexer, keyframes, outline, timeline, transcribe, vision
 from unstuck.ingest.pipeline import SKIPPED, StageContext, StageFn
 
 log = logging.getLogger(__name__)
@@ -22,19 +23,29 @@ def _transcript_only(ctx: StageContext) -> bool:
     return repo.get_video(ctx.conn, ctx.video_id).visual_mode == "transcript_only"
 
 
+def _source(ctx: StageContext):
+    return sources.for_video(repo.get_video(ctx.conn, ctx.video_id), ctx.settings)
+
+
 def stage_metadata(ctx: StageContext) -> None:
-    info = youtube.fetch_info(ctx.video_id)
-    meta = youtube.check_video_info(info, ctx.settings.max_duration_s)
-    youtube.save_info(info, ctx.video_dir / INFO_FILE)
-    repo.update_video(ctx.conn, ctx.video_id, title=meta.title, channel=meta.channel, duration=meta.duration)
+    src = _source(ctx)
+    info = src.fetch_info(ctx.video_id)
+    meta = src.check_info(info, ctx.settings.max_duration_s)
+    files.save_info(info, ctx.video_dir / INFO_FILE)
+    repo.update_video(
+        ctx.conn, ctx.video_id,
+        title=meta.title, channel=meta.channel, duration=meta.duration,
+        part_title=meta.part_title, parts_total=meta.parts_total, thumbnail=meta.thumbnail,
+    )
 
 
 def stage_transcript(ctx: StageContext) -> None:
-    info = youtube.load_info(ctx.video_dir / INFO_FILE)
-    cues = youtube.fetch_captions(info)
+    src = _source(ctx)
+    info = files.load_info(ctx.video_dir / INFO_FILE)
+    cues = src.fetch_captions(info)
     if not cues:
         log.info("no captions for %s, transcribing audio", ctx.video_id)
-        audio = youtube.download_audio(ctx.video_id, ctx.video_dir)
+        audio = src.download_audio(ctx.video_id, ctx.video_dir)
         cues = transcribe.transcribe(audio, ctx.settings.whisper_model)
     if not cues:
         raise IngestError("NO_TRANSCRIPT", "没有字幕，语音转写也没有得到内容")
@@ -48,7 +59,7 @@ def stage_transcript(ctx: StageContext) -> None:
 
 def stage_download(ctx: StageContext) -> None:
     try:
-        youtube.download_video(ctx.video_id, ctx.video_dir)
+        _source(ctx).download_video(ctx.video_id, ctx.video_dir)
     except Exception:
         log.warning("download failed for %s, continuing transcript-only", ctx.video_id, exc_info=True)
         repo.update_video(ctx.conn, ctx.video_id, visual_mode="transcript_only")
@@ -59,7 +70,7 @@ def stage_download(ctx: StageContext) -> None:
 def stage_keyframes(ctx: StageContext) -> str | None:
     if _transcript_only(ctx):
         return SKIPPED
-    video_path = youtube.find_video_file(ctx.video_dir)
+    video_path = files.find_video_file(ctx.video_dir)
     if video_path is None:
         raise IngestError("DOWNLOAD_FAILED", "找不到已下载的视频文件")
     duration = repo.get_video(ctx.conn, ctx.video_id).duration

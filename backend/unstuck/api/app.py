@@ -11,11 +11,11 @@ from fastapi import Depends, FastAPI, HTTPException
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field, StringConstraints
 
+from unstuck import sources
 from unstuck.api.runner import PipelineRunner
 from unstuck.config import Settings, load_settings
 from unstuck.db import connect, repo
 from unstuck.errors import IngestError
-from unstuck.ingest import youtube
 from unstuck.llm.base import LLM
 from unstuck.models import Video
 from unstuck.tutor.answer import stream_answer
@@ -111,13 +111,15 @@ def create_app(settings: Settings | None = None, llm: LLM | None = None, runner=
     @app.post("/api/videos", status_code=202)
     def import_video(req: ImportRequest, conn=Depends(get_conn)):
         try:
-            video_id = youtube.parse_video_id(req.url)
+            ref = sources.resolve(req.url, settings)
         except IngestError as exc:
             raise _error(400, exc.code, exc.message) from exc
-        created = repo.insert_video(conn, video_id, youtube.watch_url(video_id))
-        video = repo.get_video(conn, video_id)
+        created = repo.insert_video(
+            conn, ref.video_id, ref.url, source=ref.source, course_id=ref.course_id, part=ref.part
+        )
+        video = repo.get_video(conn, ref.video_id)
         if created or video.status == "failed":
-            return start_import(conn, video_id)
+            return start_import(conn, ref.video_id)
         return asdict(video)
 
     @app.get("/api/videos/{video_id}")

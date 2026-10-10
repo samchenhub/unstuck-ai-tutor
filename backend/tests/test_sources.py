@@ -1,0 +1,41 @@
+import pytest
+
+from unstuck import sources
+from unstuck.errors import IngestError
+from unstuck.ingest import youtube as yt
+from unstuck.models import Video
+from unstuck.sources.base import Playback, VideoMeta
+
+
+def make_video(video_id="dQw4w9WgXcQ", source="youtube"):
+    return Video(
+        id=video_id, url="u", title="", channel="", duration=0.0, status="ready", ask_ready=True,
+        stage_states={}, visual_mode="full", outline=None, error_code=None, error_message=None,
+        created_at="", source=source,
+    )
+
+
+def test_resolve_youtube(settings):
+    ref = sources.resolve("https://youtu.be/dQw4w9WgXcQ", settings)
+    assert (ref.source, ref.video_id, ref.url) == ("youtube", "dQw4w9WgXcQ", "https://www.youtube.com/watch?v=dQw4w9WgXcQ")
+
+
+def test_resolve_rejects_garbage(settings):
+    with pytest.raises(IngestError) as err:
+        sources.resolve("https://vimeo.com/1", settings)
+    assert err.value.code == "INVALID_URL"
+
+
+def test_for_video_youtube_adapter_delegates(monkeypatch, settings):
+    src = sources.for_video(make_video(), settings)
+    assert src.name == "youtube"
+    monkeypatch.setattr(yt, "fetch_info", lambda vid: {"id": vid, "title": "T", "channel": "C", "duration": 12})
+    info = src.fetch_info("dQw4w9WgXcQ")
+    assert src.check_info(info, 7200) == VideoMeta(title="T", channel="C", duration=12.0)
+    assert src.playback("dQw4w9WgXcQ") == Playback(kind="youtube")
+    assert [p.video_id for p in src.parts("dQw4w9WgXcQ")] == ["dQw4w9WgXcQ"]
+
+
+def test_for_name_unknown(settings):
+    with pytest.raises(ValueError):
+        sources.for_name("vimeo", settings)
