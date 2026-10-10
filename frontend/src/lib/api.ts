@@ -37,6 +37,32 @@ export interface Video {
   error_code: string | null
   error_message: string | null
   created_at: string
+  source: 'youtube' | 'bilibili'
+  course_id: string | null
+  part: number | null
+  part_title: string
+  parts_total: number
+  thumbnail: string
+}
+
+export interface Playback {
+  kind: 'youtube' | 'mp4'
+  url: string
+  expires_at: number
+  duration: number
+}
+
+export interface Part {
+  part: number
+  title: string
+  duration: number
+  video_id: string
+  imported: boolean
+}
+
+export interface BilibiliStatus {
+  logged_in: boolean
+  cookies_browser: string
 }
 
 export interface ChatMessage {
@@ -88,6 +114,9 @@ export const api = {
     request<Video>('/api/videos', { method: 'POST', headers: JSON_HEADERS, body: JSON.stringify({ url }) }),
   retry: (id: string) => request<Video>(`/api/videos/${id}/retry`, { method: 'POST' }),
   listChats: (id: string) => request<ChatMessage[]>(`/api/videos/${id}/chats`),
+  playback: (id: string, quality = 720) => request<Playback>(`/api/videos/${id}/playback?quality=${quality}`),
+  parts: (id: string) => request<Part[]>(`/api/videos/${id}/parts`),
+  bilibiliStatus: () => request<BilibiliStatus>('/api/bilibili/status'),
 }
 
 /** POST a question and stream the answer. Always finishes with exactly one 'done' or 'error' event. */

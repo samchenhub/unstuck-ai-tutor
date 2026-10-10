@@ -1,11 +1,9 @@
 import { useEffect, useState } from 'react'
 import { Library } from './components/Library'
 import { VideoPage } from './components/VideoPage'
+import { openVideo, parseRoute } from './lib/videoId'
 
-function readVideoId(): string | null {
-  const match = /^#\/v\/([A-Za-z0-9_-]{11})$/.exec(window.location.hash)
-  return match ? match[1] : null
-}
+const readVideoId = () => parseRoute(window.location.hash)
 
 export default function App() {
   const [videoId, setVideoId] = useState(readVideoId)
@@ -16,10 +14,6 @@ export default function App() {
     return () => window.removeEventListener('hashchange', onHashChange)
   }, [])
 
-  const open = (id: string) => {
-    window.location.hash = `#/v/${id}`
-  }
-
   return (
     <div className="app">
       <header className="topbar">
@@ -28,7 +22,7 @@ export default function App() {
         </a>
         <span className="tagline">Stuck on a video? Pause and ask.</span>
       </header>
-      {videoId ? <VideoPage key={videoId} videoId={videoId} /> : <Library onOpen={open} />}
+      {videoId ? <VideoPage key={videoId} videoId={videoId} /> : <Library onOpen={openVideo} />}
     </div>
   )
 }
