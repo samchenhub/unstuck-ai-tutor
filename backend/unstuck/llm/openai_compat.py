@@ -49,16 +49,17 @@ class OpenAICompatLLM:
         self._retry_attempts = retry_attempts
         self._retry_base_delay = retry_base_delay
 
-    def _with_retry(self, fn: Callable[[], T]) -> T:
+    def _with_retry(self, fn: Callable[[], T], attempts: int | None = None) -> T:
         # Free tiers rate-limit in bursts, so the default waits 2+4+8+16+32 s before giving up.
+        # Interactive callers pass a smaller `attempts` so a busy model fails fast.
         try:
             return with_retry(
-                fn, attempts=self._retry_attempts, base_delay=self._retry_base_delay, retry_on=RETRYABLE
+                fn, attempts=attempts or self._retry_attempts, base_delay=self._retry_base_delay, retry_on=RETRYABLE
             )
         except openai.RateLimitError as exc:
             raise ModelBusyError(MODEL_BUSY_MESSAGE) from exc
 
-    def _complete(self, model: str, messages: list[dict], **kwargs) -> str:
+    def _complete(self, model: str, messages: list[dict], *, attempts: int | None = None, **kwargs) -> str:
         def call() -> str:
             with self._slots:
                 resp = self._client.chat.completions.create(
@@ -66,13 +67,13 @@ class OpenAICompatLLM:
                 )
             return resp.choices[0].message.content or ""
 
-        return self._with_retry(call)
+        return self._with_retry(call, attempts)
 
     def chat(self, messages: list[dict], *, json_mode: bool = False) -> str:
         kwargs = {"response_format": {"type": "json_object"}} if json_mode else {}
         return self._complete(self._chat_model, messages, **kwargs)
 
-    def chat_stream(self, messages: list[dict]) -> Iterator[str]:
+    def chat_stream(self, messages: list[dict], *, attempts: int | None = None) -> Iterator[str]:
         # An open stream is an in-flight API request, so it holds a concurrency slot for
         # its whole life; the slot is released when the generator finishes, raises or is
         # closed. Backoff sleeps never hold the slot: each creation attempt acquires it
@@ -90,7 +91,7 @@ class OpenAICompatLLM:
                 self._slots.release()
                 raise
 
-        stream = self._with_retry(create)
+        stream = self._with_retry(create, attempts)
         try:
             for chunk in stream:
                 if chunk.choices and chunk.choices[0].delta.content:
@@ -98,7 +99,7 @@ class OpenAICompatLLM:
         finally:
             self._slots.release()
 
-    def vision(self, prompt: str, image_path: Path) -> str:
+    def vision(self, prompt: str, image_path: Path, *, attempts: int | None = None) -> str:
         path = Path(image_path)
         mime = mimetypes.guess_type(path.name)[0] or "image/jpeg"
         data_url = f"data:{mime};base64,{base64.b64encode(path.read_bytes()).decode()}"
@@ -111,7 +112,7 @@ class OpenAICompatLLM:
                 ],
             }
         ]
-        return self._complete(self._vision_model, messages)
+        return self._complete(self._vision_model, messages, attempts=attempts)
 
     def embed(self, texts: list[str]) -> list[list[float]]:
         return self._embedder.embed(texts)

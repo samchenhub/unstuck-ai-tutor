@@ -215,3 +215,19 @@ def test_build_llm_extra_body_follows_disable_thinking(settings):
     off = factory.build_llm(dataclasses.replace(keyed, llm_disable_thinking=False))
     assert on._extra_body == {"thinking": {"type": "disabled"}}
     assert off._extra_body is None
+
+
+def test_vision_attempts_override_limits_retries_then_model_busy(tmp_path):
+    image = tmp_path / "f.png"
+    image.write_bytes(b"x")
+    llm = make_llm([rate_limit_error() for _ in range(6)])
+    with pytest.raises(ModelBusyError):
+        llm.vision("describe", image, attempts=2)
+    assert len(llm._client.calls) == 2
+
+
+def test_chat_stream_attempts_override_limits_retries_then_model_busy():
+    llm = make_llm([rate_limit_error() for _ in range(6)])
+    with pytest.raises(ModelBusyError):
+        list(llm.chat_stream([{"role": "user", "content": "hi"}], attempts=2))
+    assert len(llm._client.calls) == 2

@@ -43,7 +43,7 @@ class FakeLLM:
         self.calls.append(("chat", messages))
         return self._pop(self.chat_responses, DEFAULT_CHAT)
 
-    def chat_stream(self, messages: list[dict]) -> Iterator[str]:
+    def chat_stream(self, messages: list[dict], *, attempts: int | None = None) -> Iterator[str]:
         self.calls.append(("chat_stream", messages))
         item = self._pop(self.chat_responses, DEFAULT_CHAT)
         chunks = item if isinstance(item, list) else [item[i : i + 8] for i in range(0, len(item), 8)]
@@ -52,7 +52,7 @@ class FakeLLM:
                 raise chunk
             yield chunk
 
-    def vision(self, prompt: str, image_path: Path) -> str:
+    def vision(self, prompt: str, image_path: Path, *, attempts: int | None = None) -> str:
         self.calls.append(("vision", (prompt, str(image_path))))
         return self._pop(self.vision_responses, DEFAULT_VISION)
 

@@ -5,7 +5,7 @@ from functools import partial
 from pathlib import Path
 
 from unstuck.jsonfix import loads_lenient
-from unstuck.llm.base import LLM
+from unstuck.llm.base import LLM, ModelBusyError
 from unstuck.llm.retry import with_retry
 from unstuck.models import FrameDescription, Keyframe
 
@@ -66,7 +66,9 @@ def describe_pending(
 ) -> int:
     """Describe every frame that is not yet 'ok', in time order, passing the previous
     frame's summary for context. A frame that keeps failing is saved as None
-    (status 'failed') and the loop moves on. Returns the number of failed frames."""
+    (status 'failed') and the loop moves on. Returns the number of failed frames.
+    A persistent rate limit (ModelBusyError, already retried inside the LLM) stops the
+    loop at once: the remaining frames stay pending for a later retry and the error propagates."""
     sleep = sleep or time.sleep
     previous = ""
     failed = 0
@@ -78,8 +80,11 @@ def describe_pending(
         try:
             raw = with_retry(
                 partial(_describe_once, llm, prompt, Path(frame.image_path)),
-                attempts=attempts, base_delay=base_delay, sleep=sleep,
+                attempts=attempts, base_delay=base_delay, sleep=sleep, give_up_on=(ModelBusyError,),
             )
+        except ModelBusyError:
+            log.warning("vision rate-limited at keyframe %s; leaving the remaining frames pending", frame.id)
+            raise
         except Exception:
             log.warning("vision failed for keyframe %s at %.1fs", frame.id, frame.t, exc_info=True)
             save(frame.id, None)

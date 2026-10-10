@@ -161,7 +161,7 @@ def stream_answer(
 
     parts: list[str] = []
     try:
-        for delta in llm.chat_stream(messages):
+        for delta in llm.chat_stream(messages, attempts=2):
             parts.append(delta)
             yield {"type": "delta", "text": delta}
     except GeneratorExit:

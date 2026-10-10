@@ -29,7 +29,7 @@ def live_frame_description(
     image = video_dir / "live" / f"{second}.jpg"
     try:
         media.extract_frame(video_path, float(second), image)
-        description = llm.vision(LIVE_FRAME_PROMPT.format(question=question), image).strip()
+        description = llm.vision(LIVE_FRAME_PROMPT.format(question=question), image, attempts=2).strip()
     except Exception:
         log.warning("live frame failed for %s at %ss", video_id, second, exc_info=True)
         return None

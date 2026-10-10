@@ -39,14 +39,19 @@ def create_app(settings: Settings | None = None, llm: LLM | None = None, runner=
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
     settings = settings or load_settings()
     built: dict[str, LLM] = {}
+    build_lock = threading.Lock()
 
     def get_llm() -> LLM:
         if llm is not None:
             return llm
         if "llm" not in built:
-            from unstuck.llm.factory import build_llm
+            # The runner, warm-up and request threads can all get here at once; building
+            # twice would load the embedding model twice and split the concurrency limit.
+            with build_lock:
+                if "llm" not in built:
+                    from unstuck.llm.factory import build_llm
 
-            built["llm"] = build_llm(settings)
+                    built["llm"] = build_llm(settings)
         return built["llm"]
 
     runner = runner or PipelineRunner(settings, get_llm)
@@ -72,6 +77,7 @@ def create_app(settings: Settings | None = None, llm: LLM | None = None, runner=
         runner.shutdown()
 
     app = FastAPI(title="Unstuck", lifespan=lifespan)
+    app.state.get_llm = get_llm
 
     def get_conn():
         conn = connect(settings.db_path, settings.embed_dim)

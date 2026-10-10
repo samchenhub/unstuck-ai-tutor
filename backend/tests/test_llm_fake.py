@@ -53,3 +53,9 @@ def test_embed_shared_words_are_closer():
     q, near, far = llm.embed(["dot product geometry", "the dot product", "eigenvalues of matrices"])
     dot = lambda u, v: sum(x * y for x, y in zip(u, v))
     assert dot(q, near) > dot(q, far)
+
+
+def test_attempts_keyword_is_accepted_and_ignored(tmp_path):
+    llm = FakeLLM(chat_responses=["ab"])
+    assert "".join(llm.chat_stream([{"role": "user", "content": "x"}], attempts=2)) == "ab"
+    assert llm.vision("p", tmp_path / "f.jpg", attempts=2)

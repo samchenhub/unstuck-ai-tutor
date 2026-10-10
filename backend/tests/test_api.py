@@ -123,3 +123,26 @@ def test_startup_resumes_importing_videos(settings, fake_llm, conn):
     with TestClient(create_app(settings=settings, llm=fake_llm, runner=runner)):
         pass
     assert runner.submitted == ["aaaaaaaaaaa"]
+
+
+def test_get_llm_builds_the_real_llm_exactly_once_across_threads(settings, runner, monkeypatch):
+    import threading
+
+    built = []
+
+    def slow_build(_settings):
+        time.sleep(0.05)
+        obj = object()
+        built.append(obj)
+        return obj
+
+    monkeypatch.setattr("unstuck.llm.factory.build_llm", slow_build)
+    app = create_app(settings=settings, runner=runner)
+    results = []
+    threads = [threading.Thread(target=lambda: results.append(app.state.get_llm())) for _ in range(6)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    assert len(built) == 1
+    assert len(results) == 6 and all(r is built[0] for r in results)

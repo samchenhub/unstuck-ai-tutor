@@ -1,6 +1,8 @@
+import pytest
+
 from tests.factories import make_keyframe
 from unstuck.ingest.vision import describe_pending, parse_vision_output
-from unstuck.llm import FakeLLM
+from unstuck.llm import FakeLLM, ModelBusyError
 
 
 def test_parse_clean_json():
@@ -87,3 +89,22 @@ def test_blank_reply_is_a_failure_after_retries():
 
     assert failed == 1
     assert saved[1] is None
+
+
+def test_model_busy_stops_the_loop_and_leaves_remaining_frames_pending():
+    frames = [make_keyframe(i, float(i), status="pending") for i in (1, 2, 3)]
+    ok = '{"kind": "slide", "summary": "Agenda", "ocr_text": "", "change_note": ""}'
+    llm = FakeLLM(vision_responses=[ok, ModelBusyError("x")])
+    saved = {}
+
+    with pytest.raises(ModelBusyError):
+        describe_pending(llm, frames, saved.__setitem__, attempts=3, sleep=lambda s: None)
+
+    assert set(saved) == {1}
+    assert len([c for c in llm.calls if c[0] == "vision"]) == 2  # busy error is not retried
+
+    later = FakeLLM(vision_responses=[ok, ok])
+    done = [make_keyframe(1, 1.0, status="ok", summary="Agenda")] + frames[1:]
+    saved2 = {}
+    assert describe_pending(later, done, saved2.__setitem__, sleep=lambda s: None) == 0
+    assert set(saved2) == {2, 3}
