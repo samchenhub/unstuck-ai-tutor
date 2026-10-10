@@ -1,7 +1,8 @@
 import logging
 import sqlite3
+from pathlib import Path
 
-from unstuck import media
+from unstuck import media, sources
 from unstuck.config import Settings
 from unstuck.db import repo
 from unstuck.ingest import files
@@ -23,12 +24,12 @@ def live_frame_description(
         return cached
 
     video_dir = settings.video_dir(video_id)
-    video_path = files.find_video_file(video_dir)
-    if video_path is None:
+    frame_input = _frame_input(conn, settings, video_id, video_dir)
+    if frame_input is None:
         return None
     image = video_dir / "live" / f"{second}.jpg"
     try:
-        media.extract_frame(video_path, float(second), image)
+        media.extract_frame(frame_input, float(second), image)
         description = llm.vision(LIVE_FRAME_PROMPT.format(question=question), image, attempts=2).strip()
     except Exception:
         log.warning("live frame failed for %s at %ss", video_id, second, exc_info=True)
@@ -37,3 +38,18 @@ def live_frame_description(
         return None
     repo.put_frame_cache(conn, video_id, second, description)
     return description
+
+
+def _frame_input(conn: sqlite3.Connection, settings: Settings, video_id: str, video_dir: Path) -> Path | str | None:
+    """The downloaded file if there is one; otherwise the online stream for sources that allow it."""
+    local = files.find_video_file(video_dir)
+    if local is not None:
+        return local
+    video = repo.get_video(conn, video_id)
+    if video is None or video.source == "youtube":
+        return None
+    try:
+        return sources.for_video(video, settings).playback(video_id).url or None
+    except Exception:
+        log.warning("no stream URL for live frame of %s", video_id, exc_info=True)
+        return None

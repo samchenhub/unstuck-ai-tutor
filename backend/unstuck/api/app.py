@@ -136,6 +136,28 @@ def create_app(settings: Settings | None = None, llm: LLM | None = None, runner=
         require_video(conn, video_id)
         return [asdict(c) for c in repo.list_chats(conn, video_id)]
 
+    def source_call(fn):
+        try:
+            return fn()
+        except IngestError as exc:
+            raise _error(502, exc.code, exc.message) from exc
+
+    @app.get("/api/videos/{video_id}/playback")
+    def playback(video_id: str, quality: int = 720, conn=Depends(get_conn)):
+        video = require_video(conn, video_id)
+        return asdict(source_call(lambda: sources.for_video(video, settings).playback(video_id, quality)))
+
+    @app.get("/api/videos/{video_id}/parts")
+    def parts(video_id: str, conn=Depends(get_conn)):
+        video = require_video(conn, video_id)
+        items = source_call(lambda: sources.for_video(video, settings).parts(video_id))
+        imported = {v.id for v in repo.list_videos(conn)}
+        return [{**asdict(p), "imported": p.video_id in imported} for p in items]
+
+    @app.get("/api/bilibili/status")
+    def bilibili_status():
+        return sources.bilibili_status(settings)
+
     @app.post("/api/videos/{video_id}/ask")
     def ask(video_id: str, req: AskRequest, conn=Depends(get_conn)):
         video = require_video(conn, video_id)

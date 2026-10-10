@@ -4,8 +4,11 @@ import time
 import pytest
 from fastapi.testclient import TestClient
 
+from unstuck import sources
 from unstuck.api.app import create_app
 from unstuck.db import repo
+from unstuck.errors import IngestError
+from unstuck.sources.base import Part, Playback
 
 
 class FakeRunner:
@@ -154,3 +157,52 @@ def test_startup_warns_when_ffmpeg_is_missing(settings, fake_llm, runner, monkey
         with TestClient(create_app(settings=settings, llm=fake_llm, runner=runner)):
             pass
     assert "ffmpeg 未安装" in caplog.text
+
+
+class FakeBiliSource:
+    name = "bilibili"
+
+    def playback(self, video_id, quality=720):
+        return Playback(kind="mp4", url="https://upos.bilivideo.com/v.mp4", expires_at=123.0, duration=50.0)
+
+    def parts(self, video_id):
+        return [Part(1, "概念", 100.0, "BV1Ex4y1G7nG_p1"), Part(2, "法则", 50.0, "BV1Ex4y1G7nG_p2")]
+
+
+def test_import_bilibili_link(client, runner):
+    r = client.post("/api/videos", json={"url": "https://www.bilibili.com/video/BV1Ex4y1G7nG?p=2"})
+    assert r.status_code == 202
+    body = r.json()
+    assert (body["id"], body["source"], body["course_id"], body["part"]) == ("BV1Ex4y1G7nG_p2", "bilibili", "BV1Ex4y1G7nG", 2)
+    assert runner.submitted == ["BV1Ex4y1G7nG_p2"]
+
+
+def test_import_rejects_paid_course(client):
+    r = client.post("/api/videos", json={"url": "https://www.bilibili.com/cheese/play/ss1"})
+    assert r.status_code == 400 and r.json()["detail"]["code"] == "UNSUPPORTED_URL"
+
+
+def test_playback_and_parts(client, conn, monkeypatch):
+    repo.insert_video(conn, "BV1Ex4y1G7nG_p2", "u", source="bilibili", course_id="BV1Ex4y1G7nG", part=2)
+    monkeypatch.setattr(sources, "for_video", lambda video, settings: FakeBiliSource())
+    pb = client.get("/api/videos/BV1Ex4y1G7nG_p2/playback").json()
+    assert pb == {"kind": "mp4", "url": "https://upos.bilivideo.com/v.mp4", "expires_at": 123.0, "duration": 50.0}
+    parts = client.get("/api/videos/BV1Ex4y1G7nG_p2/parts").json()
+    assert [(p["part"], p["imported"]) for p in parts] == [(1, False), (2, True)]
+
+
+def test_playback_source_error_is_502(client, conn, monkeypatch):
+    repo.insert_video(conn, "BV1Ex4y1G7nG_p1", "u", source="bilibili", course_id="BV1Ex4y1G7nG", part=1)
+
+    class Broken(FakeBiliSource):
+        def playback(self, video_id, quality=720):
+            raise IngestError("BILIBILI_BLOCKED", "B站暂时限制了访问，请稍后重试")
+
+    monkeypatch.setattr(sources, "for_video", lambda video, settings: Broken())
+    r = client.get("/api/videos/BV1Ex4y1G7nG_p1/playback")
+    assert r.status_code == 502 and r.json()["detail"]["code"] == "BILIBILI_BLOCKED"
+
+
+def test_bilibili_status(client, monkeypatch):
+    monkeypatch.setattr(sources, "bilibili_status", lambda settings: {"logged_in": False, "cookies_browser": "chrome"})
+    assert client.get("/api/bilibili/status").json() == {"logged_in": False, "cookies_browser": "chrome"}

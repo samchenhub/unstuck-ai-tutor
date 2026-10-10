@@ -2,13 +2,13 @@ import subprocess
 from pathlib import Path
 
 
-def extract_frame(video_path: Path, t: float, out_path: Path) -> Path:
-    """Grab the frame at t seconds as a JPEG using ffmpeg."""
+def extract_frame(video: Path | str, t: float, out_path: Path) -> Path:
+    """Grab the frame at t seconds as a JPEG using ffmpeg; `video` may be a local file or an http(s) URL."""
     out_path.parent.mkdir(parents=True, exist_ok=True)
     out_path.unlink(missing_ok=True)
     cmd = [
         "ffmpeg", "-y", "-loglevel", "error",
-        "-ss", f"{t:.3f}", "-i", str(video_path),
+        "-ss", f"{t:.3f}", "-i", str(video),
         "-frames:v", "1", "-q:v", "3", str(out_path),
     ]
     try:

@@ -1,7 +1,9 @@
 import shutil
 
+from unstuck import sources
 from unstuck.db import repo
 from unstuck.llm import FakeLLM
+from unstuck.sources.base import Playback
 from unstuck.tutor.frame import live_frame_description
 
 VID = "abcdefghijk"
@@ -49,3 +51,20 @@ def test_vision_failure_returns_none(conn, settings, sample_video):
     llm = FakeLLM(vision_responses=[RuntimeError("model down")])
     assert live_frame_description(conn, llm, settings, VID, 1.0, "q") is None
     assert repo.get_frame_cache(conn, VID, 1) is None
+
+
+def test_bilibili_without_local_file_uses_stream_url(conn, settings, sample_video, monkeypatch):
+    repo.insert_video(conn, "BV1Ex4y1G7nG_p1", "u", source="bilibili", course_id="BV1Ex4y1G7nG", part=1)
+
+    class StreamSource:
+        def playback(self, video_id, quality=720):
+            return Playback(kind="mp4", url=str(sample_video))  # ffmpeg reads a URL or a path alike
+
+    monkeypatch.setattr(sources, "for_video", lambda video, s: StreamSource())
+    llm = FakeLLM(vision_responses=["白板上写着导数定义"])
+    assert live_frame_description(conn, llm, settings, "BV1Ex4y1G7nG_p1", 1.0, "这是什么") == "白板上写着导数定义"
+
+
+def test_youtube_without_local_file_still_returns_none(conn, settings):
+    repo.insert_video(conn, VID, "u")
+    assert live_frame_description(conn, FakeLLM(), settings, VID, 1.0, "q") is None
