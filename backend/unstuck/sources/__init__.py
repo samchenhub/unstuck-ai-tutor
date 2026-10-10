@@ -64,4 +64,4 @@ def for_video(video: Video, settings: Settings) -> Source:
 
 def bilibili_status(settings: Settings) -> dict:
     browser = settings.bilibili_cookies_browser
-    return {"logged_in": bool(browser) and client_for(settings).is_logged_in(), "cookies_browser": browser}
+    return {"logged_in": bool(browser) and client_for(settings).is_logged_in(force=True), "cookies_browser": browser}

@@ -106,3 +106,9 @@
 ## 第二阶段：B站视频来源（实现阶段）
 
 （实现过程中遇到的新问题追加在这里。）
+
+### 17. 读取不到浏览器 cookie 时整条 B站链路报错
+- **问题**：Chrome 正在运行或没有读取权限时，所有 B站请求都失败，连"未登录"的提示都出不来。
+- **原因**：yt-dlp 的 `cookiesfrombrowser` 是惰性的——创建 `YoutubeDL` 时不读 cookie，第一次 `urlopen` 才读，失败时抛 `CookieLoadError`（`YoutubeDLError` 的子类），所以只在构造处捕获没用。另外 cookie 在进程内只读一次，用户在 Chrome 登录后刷新页面也不会生效。
+- **解决**：在 `_ydl_fetch_json` 里捕获 `CookieLoadError`，记一次警告，置 `cookies_unavailable`，丢弃当前 `YoutubeDL`，不带 cookie 重建后重试；`ydl_options()` 同步去掉 `cookiesfrombrowser`，下载也随之降级为游客。`is_logged_in(force=True)`（状态接口使用）会丢弃 cookie jar 并重新读取，登录后刷新即可生效。
+- **代码**：`backend/unstuck/sources/bilibili/client.py`（`_ydl_fetch_json`、`is_logged_in`）

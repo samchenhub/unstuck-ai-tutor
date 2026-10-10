@@ -7,6 +7,10 @@ import time
 import urllib.parse
 from collections.abc import Callable
 
+from yt_dlp import YoutubeDL
+from yt_dlp.cookies import CookieLoadError
+from yt_dlp.networking.exceptions import TransportError
+
 from unstuck.errors import IngestError
 from unstuck.sources.bilibili import parse
 
@@ -32,7 +36,7 @@ def _status(exc: Exception) -> int | None:
 
 
 def _retryable(exc: Exception) -> bool:
-    return _status(exc) in _RETRY_STATUS or isinstance(exc, (OSError, TimeoutError)) or type(exc).__name__ == "TransportError"
+    return _status(exc) in _RETRY_STATUS or isinstance(exc, (TransportError, TimeoutError, ConnectionError))
 
 
 class BiliClient:
@@ -51,21 +55,38 @@ class BiliClient:
         self._lock = threading.Lock()
         self._mixin: str | None = None
         self._login: tuple[float, bool] | None = None
+        self.cookies_unavailable = False
 
     def ydl_options(self) -> dict:
         opts = {"quiet": True, "no_warnings": True, "noprogress": True, "http_headers": HEADERS}
-        if self.cookies_browser:
+        if self.cookies_browser and not self.cookies_unavailable:
             opts["cookiesfrombrowser"] = (self.cookies_browser,)
         return opts
 
-    def _ydl_fetch_json(self, url: str) -> dict:
-        from yt_dlp import YoutubeDL
+    def _ydl_urlopen_json(self, url: str) -> dict:
+        if self._ydl is None:
+            self._ydl = YoutubeDL(self.ydl_options())
+        with self._ydl.urlopen(url) as resp:
+            return json.loads(resp.read().decode("utf-8"))
 
+    def _ydl_fetch_json(self, url: str) -> dict:
         with self._lock:  # one shared cookie jar; Bilibili calls are few, so serialising them is fine
-            if self._ydl is None:
-                self._ydl = YoutubeDL(self.ydl_options())
-            with self._ydl.urlopen(url) as resp:
-                return json.loads(resp.read().decode("utf-8"))
+            try:
+                return self._ydl_urlopen_json(url)
+            except CookieLoadError:
+                # yt-dlp reads browser cookies lazily on the first request; if that fails (browser
+                # running/locked, no permission), carry on anonymously instead of failing every call.
+                if self.cookies_unavailable or not self.cookies_browser:
+                    raise
+                log.warning("cannot read %s cookies; continuing without Bilibili login", self.cookies_browser,
+                            exc_info=True)
+                self.cookies_unavailable = True
+                self._ydl = None
+                return self._ydl_urlopen_json(url)
+
+    def _drop_cookie_jar(self) -> None:
+        with self._lock:
+            self._ydl = None
 
     def get(self, url: str) -> dict:
         """GET a JSON document, backing off on risk control and network errors."""
@@ -94,31 +115,44 @@ class BiliClient:
     def _url(self, path: str, params: dict) -> str:
         return f"{API}{path}?{urllib.parse.urlencode(params)}"
 
+    def _nav_body(self) -> dict:
+        return self.get(f"{API}/x/web-interface/nav")
+
     def nav(self) -> dict:
         # nav answers code -101 when logged out but still carries the WBI keys, so no _data() here.
-        return self.get(f"{API}/x/web-interface/nav").get("data") or {}
+        return self._nav_body().get("data") or {}
 
     def _mixin_key(self, refresh: bool = False) -> str:
         if self._mixin is None or refresh:
-            wbi = self.nav().get("wbi_img") or {}
-            self._mixin = parse.mixin_key(wbi.get("img_url", ""), wbi.get("sub_url", ""))
+            body = self._nav_body()
+            wbi = (body.get("data") or {}).get("wbi_img") or {}
+            img_url, sub_url = wbi.get("img_url"), wbi.get("sub_url")
+            if not img_url or not sub_url:
+                if body.get("code") in _BLOCKED_CODES:
+                    raise IngestError("BILIBILI_BLOCKED", BLOCKED_MESSAGE)
+                raise IngestError("BILIBILI_ERROR", "访问 B站接口失败，请稍后重试")
+            self._mixin = parse.mixin_key(img_url, sub_url)
         return self._mixin
 
     def _signed(self, path: str, params: dict) -> dict:
         for refresh in (False, True):
             signed = parse.wbi_sign(params, self._mixin_key(refresh), int(self._clock()))
+            body = self.get(self._url(path, signed))  # network/risk-control failures are not a stale key
             try:
-                return self._data(self.get(self._url(path, signed)))
+                return self._data(body)
             except IngestError as exc:
-                if refresh or exc.code == "VIDEO_UNAVAILABLE":
+                if refresh or exc.code != "BILIBILI_ERROR":
                     raise
-                log.info("signed call to %s failed (%s); refreshing WBI key", path, exc.code)
+                log.info("signed call to %s returned code %s; refreshing WBI key", path, body.get("code"))
         raise AssertionError("unreachable")
 
-    def is_logged_in(self) -> bool:
+    def is_logged_in(self, force: bool = False) -> bool:
         now = self._clock()
-        if self._login and now - self._login[0] < LOGIN_CACHE_S:
+        if not force and self._login and now - self._login[0] < LOGIN_CACHE_S:
             return self._login[1]
+        if force:
+            self.cookies_unavailable = False  # let a fresh login / unlocked browser be noticed
+        self._drop_cookie_jar()  # re-read browser cookies: the user may have just logged in
         try:
             logged_in = bool(self.nav().get("isLogin"))
         except Exception:

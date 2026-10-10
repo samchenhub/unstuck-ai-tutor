@@ -102,3 +102,84 @@ def test_login_check_failure_means_logged_out():
 def test_ydl_options_use_browser_cookies():
     assert BiliClient("chrome").ydl_options()["cookiesfrombrowser"] == ("chrome",)
     assert "cookiesfrombrowser" not in BiliClient("").ydl_options()
+
+
+def test_unreadable_cookies_degrade_to_anonymous(monkeypatch):
+    import json
+
+    from yt_dlp.cookies import CookieLoadError
+
+    built = []
+
+    class Resp:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+        def read(self):
+            return json.dumps({"code": 0, "data": {"title": "t"}}).encode()
+
+    class FakeYDL:
+        def __init__(self, opts):
+            self.opts = opts
+            built.append(opts)
+
+        def urlopen(self, url):
+            if "cookiesfrombrowser" in self.opts:
+                raise CookieLoadError("failed to load cookies")
+            return Resp()
+
+    monkeypatch.setattr("unstuck.sources.bilibili.client.YoutubeDL", FakeYDL)
+    client = BiliClient("chrome")
+    assert client.view("BV1Ex4y1G7nG") == {"title": "t"}
+    assert client.cookies_unavailable is True
+    assert "cookiesfrombrowser" not in client.ydl_options()
+    assert len(built) == 2 and "cookiesfrombrowser" in built[0] and "cookiesfrombrowser" not in built[1]
+
+
+def test_nav_without_wbi_keys_is_blocked_not_a_crash():
+    client, _ = make({"/x/web-interface/nav": [{"code": -352, "data": {}}]})
+    with pytest.raises(IngestError) as err:
+        client.playurl_mp4("BV1Ex4y1G7nG", 111)
+    assert err.value.code == "BILIBILI_BLOCKED"
+
+
+def test_nav_without_wbi_keys_otherwise_is_error():
+    client, _ = make({"/x/web-interface/nav": [{}]})
+    with pytest.raises(IngestError) as err:
+        client.player("BV1Ex4y1G7nG", 111)
+    assert err.value.code == "BILIBILI_ERROR"
+
+
+def test_signed_call_does_not_refresh_after_exhausted_backoff():
+    client, sleeps = make({"/x/web-interface/nav": [NAV], "/x/player/wbi/playurl": [HTTPStatusError(412)]})
+    with pytest.raises(IngestError) as err:
+        client.playurl_mp4("BV1Ex4y1G7nG", 111)
+    assert err.value.code == "BILIBILI_BLOCKED"
+    assert sleeps == [2.0, 4.0]
+    assert sum("/x/web-interface/nav" in u for u in client._fetch_json.urls) == 1
+
+
+def test_transport_errors_are_retried_but_plain_oserror_is_not():
+    from yt_dlp.networking.exceptions import TransportError
+
+    view = {"code": 0, "data": {"title": "t"}}
+    client, sleeps = make({"/x/web-interface/view": [TransportError("reset"), view]})
+    assert client.view("BV1Ex4y1G7nG") == {"title": "t"}
+    assert sleeps == [2.0]
+    client, sleeps = make({"/x/web-interface/view": [OSError("disk")]})
+    with pytest.raises(IngestError) as err:
+        client.view("BV1Ex4y1G7nG")
+    assert err.value.code == "BILIBILI_ERROR" and sleeps == []
+
+
+def test_forced_login_check_bypasses_cache_and_drops_cookie_jar():
+    logged_in = {"code": 0, "data": {"isLogin": True, "wbi_img": NAV["data"]["wbi_img"]}}
+    client, _ = make({"/x/web-interface/nav": [NAV, logged_in]})
+    assert client.is_logged_in() is False
+    client._ydl = object()
+    assert client.is_logged_in() is False  # still cached
+    assert client.is_logged_in(force=True) is True
+    assert client._ydl is None
