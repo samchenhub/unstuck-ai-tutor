@@ -15,16 +15,26 @@ export const BiliPlayer = forwardRef<PlayerHandle, { videoId: string }>(function
   const [src, setSrc] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
 
+  // `resume` is null for the first load; a refresh passes the second to resume at and may be retried.
   const load = useCallback(
-    async (resume: number | null) => {
-      try {
-        const playback = await api.playback(videoId)
-        resumeAt.current = resume
-        setSrc(playback.url)
-        setError(null)
-      } catch (err) {
-        setError(err instanceof Error ? err.message : String(err))
+    (resume: number | null) => {
+      const attempt = async (): Promise<void> => {
+        try {
+          const playback = await api.playback(videoId)
+          resumeAt.current = resume
+          setSrc(playback.url)
+          setError(null)
+        } catch (err) {
+          // A refresh can fail too (e.g. Bilibili's risk control answers 412 for a while); keep backing off.
+          if (resume !== null && refreshes.current < MAX_REFRESHES) {
+            refreshes.current += 1
+            retryTimer.current = window.setTimeout(() => void attempt(), refreshDelayMs(refreshes.current))
+            return
+          }
+          setError(err instanceof Error ? err.message : String(err))
+        }
       }
+      return attempt()
     },
     [videoId],
   )

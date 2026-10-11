@@ -1,4 +1,4 @@
-import type { Video } from './api'
+import type { BilibiliStatus, Video } from './api'
 
 export type LibraryItem =
   | { kind: 'video'; video: Video }
@@ -46,4 +46,13 @@ export function groupLibrary(videos: Video[]): LibraryItem[] {
 
 export function thumbnailFor(video: Video): string {
   return video.source === 'youtube' ? `https://i.ytimg.com/vi/${video.id}/mqdefault.jpg` : video.thumbnail
+}
+
+const BROWSER_NAMES: Record<string, string> = { chrome: 'Chrome', safari: 'Safari', edge: 'Edge', firefox: 'Firefox' }
+
+/** Shown when Bilibili login is configured but not active; an empty browser means login was turned off on purpose. */
+export function bilibiliLoginWarning(status: BilibiliStatus | null): string | null {
+  if (!status || status.logged_in || !status.cookies_browser) return null
+  const browser = BROWSER_NAMES[status.cookies_browser] ?? status.cookies_browser
+  return `B站未登录：画质较低、字幕将用语音转写（较慢）。在 ${browser} 登录 bilibili.com 后刷新即可恢复。`
 }

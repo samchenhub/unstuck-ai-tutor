@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { Video } from './api'
-import { groupLibrary, thumbnailFor } from './library'
+import { bilibiliLoginWarning, groupLibrary, thumbnailFor } from './library'
 
 function video(over: Partial<Video>): Video {
   return {
@@ -32,5 +32,20 @@ describe('thumbnailFor', () => {
   it('uses YouTube thumbnails or the stored Bilibili cover', () => {
     expect(thumbnailFor(video({ id: 'aaaaaaaaaaa' }))).toBe('https://i.ytimg.com/vi/aaaaaaaaaaa/mqdefault.jpg')
     expect(thumbnailFor(video({ source: 'bilibili', thumbnail: 'https://i0.hdslb.com/a.jpg' }))).toBe('https://i0.hdslb.com/a.jpg')
+  })
+})
+
+describe('bilibiliLoginWarning', () => {
+  it('names the configured browser when logged out', () => {
+    expect(bilibiliLoginWarning({ logged_in: false, cookies_browser: 'safari' })).toBe(
+      'B站未登录：画质较低、字幕将用语音转写（较慢）。在 Safari 登录 bilibili.com 后刷新即可恢复。',
+    )
+    expect(bilibiliLoginWarning({ logged_in: false, cookies_browser: 'chrome' })).toContain('在 Chrome 登录')
+  })
+
+  it('stays quiet when logged in, unknown, or login is turned off', () => {
+    expect(bilibiliLoginWarning({ logged_in: true, cookies_browser: 'chrome' })).toBeNull()
+    expect(bilibiliLoginWarning(null)).toBeNull()
+    expect(bilibiliLoginWarning({ logged_in: false, cookies_browser: '' })).toBeNull()
   })
 })

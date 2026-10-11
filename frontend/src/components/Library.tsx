@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { api, type BilibiliStatus, type Video } from '../lib/api'
-import { groupLibrary, thumbnailFor } from '../lib/library'
+import { bilibiliLoginWarning, groupLibrary, thumbnailFor } from '../lib/library'
 import { formatTime } from '../lib/timestamps'
 import { ImportForm } from './ImportView'
 
@@ -10,8 +10,6 @@ const STATUS_LABELS: Record<Video['status'], string> = {
   failed: '导入失败',
 }
 const SOURCE_LABELS: Record<Video['source'], string> = { youtube: 'YouTube', bilibili: 'B站' }
-export const BILIBILI_LOGIN_WARNING =
-  'B站未登录：画质较低、字幕将用语音转写（较慢）。在 Chrome 登录 bilibili.com 后刷新即可恢复。'
 
 function Card({ thumbnail, source, title, meta, onClick }: {
   thumbnail: string; source: Video['source']; title: string; meta: string; onClick: () => void
@@ -32,6 +30,7 @@ export function Library({ onOpen }: { onOpen: (id: string) => void }) {
   const [videos, setVideos] = useState<Video[] | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [bili, setBili] = useState<BilibiliStatus | null>(null)
+  const loginWarning = bilibiliLoginWarning(bili)
 
   useEffect(() => {
     api
@@ -47,7 +46,7 @@ export function Library({ onOpen }: { onOpen: (id: string) => void }) {
         <h1>卡住了？暂停提问。</h1>
         <p className="muted">粘贴一个 YouTube 或 B站教学视频链接。边看边问，AI 会结合你正在看的那一秒和当前画面来讲解。</p>
         <ImportForm onImported={onOpen} />
-        {bili && !bili.logged_in && <div className="notice warning">{BILIBILI_LOGIN_WARNING}</div>}
+        {loginWarning && <div className="notice warning">{loginWarning}</div>}
       </section>
       <section>
         <h2>我的视频</h2>
