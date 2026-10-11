@@ -541,3 +541,36 @@ button:disabled {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+
+.bili-login-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.bili-login-qr {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  margin-top: 12px;
+}
+
+.bili-login-qr img {
+  border-radius: 8px;
+  background: #fff;
+}
+
+.bili-login-ok {
+  margin: 0 0 24px;
+  font-size: 14px;
+}
+
+.link-button {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--accent);
+  font: inherit;
+  cursor: pointer;
+}

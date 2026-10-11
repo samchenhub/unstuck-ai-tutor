@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { api, type BilibiliStatus, type Video } from '../lib/api'
-import { bilibiliLoginWarning, groupLibrary, thumbnailFor } from '../lib/library'
+import { groupLibrary, thumbnailFor } from '../lib/library'
+import { BiliLogin } from './BiliLogin'
 import { formatTime } from '../lib/timestamps'
 import { ImportForm } from './ImportView'
 
@@ -30,7 +31,9 @@ export function Library({ onOpen }: { onOpen: (id: string) => void }) {
   const [videos, setVideos] = useState<Video[] | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [bili, setBili] = useState<BilibiliStatus | null>(null)
-  const loginWarning = bilibiliLoginWarning(bili)
+  const loadBili = () => {
+    loadBili()
+  }
 
   useEffect(() => {
     api
@@ -46,7 +49,7 @@ export function Library({ onOpen }: { onOpen: (id: string) => void }) {
         <h1>卡住了？暂停提问。</h1>
         <p className="muted">粘贴一个 YouTube 或 B站教学视频链接。边看边问，AI 会结合你正在看的那一秒和当前画面来讲解。</p>
         <ImportForm onImported={onOpen} />
-        {loginWarning && <div className="notice warning">{loginWarning}</div>}
+        <BiliLogin status={bili} onChange={loadBili} />
       </section>
       <section>
         <h2>我的视频</h2>

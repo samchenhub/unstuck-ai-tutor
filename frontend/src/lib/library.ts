@@ -1,4 +1,4 @@
-import type { BilibiliStatus, Video } from './api'
+import type { BilibiliStatus, QrLoginState, Video } from './api'
 
 export type LibraryItem =
   | { kind: 'video'; video: Video }
@@ -48,11 +48,20 @@ export function thumbnailFor(video: Video): string {
   return video.source === 'youtube' ? `https://i.ytimg.com/vi/${video.id}/mqdefault.jpg` : video.thumbnail
 }
 
-const BROWSER_NAMES: Record<string, string> = { chrome: 'Chrome', safari: 'Safari', edge: 'Edge', firefox: 'Firefox' }
-
-/** Shown when Bilibili login is configured but not active; an empty browser means login was turned off on purpose. */
+/** Shown while Bilibili is not logged in (the library offers the QR-code login next to it). */
 export function bilibiliLoginWarning(status: BilibiliStatus | null): string | null {
-  if (!status || status.logged_in || !status.cookies_browser) return null
-  const browser = BROWSER_NAMES[status.cookies_browser] ?? status.cookies_browser
-  return `B站未登录：画质较低、字幕将用语音转写（较慢）。在 ${browser} 登录 bilibili.com 后刷新即可恢复。`
+  if (!status || status.logged_in) return null
+  return 'B站未登录：画质较低，没有字幕的视频要先做语音转写。用手机B站 App 扫码登录即可。'
+}
+
+const QR_TEXT: Record<QrLoginState, string> = {
+  waiting: '用手机B站 App 扫一扫',
+  scanned: '已扫码，请在手机上确认登录',
+  done: '已登录',
+  expired: '二维码已过期',
+  failed: '登录没有成功，请重试',
+}
+
+export function qrLoginText(state: QrLoginState): string {
+  return QR_TEXT[state]
 }

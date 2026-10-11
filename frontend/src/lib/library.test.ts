@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { Video } from './api'
-import { bilibiliLoginWarning, groupLibrary, thumbnailFor } from './library'
+import { bilibiliLoginWarning, groupLibrary, qrLoginText, thumbnailFor } from './library'
 
 function video(over: Partial<Video>): Video {
   return {
@@ -37,16 +37,24 @@ describe('thumbnailFor', () => {
 })
 
 describe('bilibiliLoginWarning', () => {
-  it('names the configured browser when logged out', () => {
-    expect(bilibiliLoginWarning({ logged_in: false, cookies_browser: 'safari' })).toBe(
-      'B站未登录：画质较低、字幕将用语音转写（较慢）。在 Safari 登录 bilibili.com 后刷新即可恢复。',
+  it('explains what is missing when logged out', () => {
+    expect(bilibiliLoginWarning({ logged_in: false, cookies_browser: '', login: null })).toBe(
+      'B站未登录：画质较低，没有字幕的视频要先做语音转写。用手机B站 App 扫码登录即可。',
     )
-    expect(bilibiliLoginWarning({ logged_in: false, cookies_browser: 'chrome' })).toContain('在 Chrome 登录')
   })
 
-  it('stays quiet when logged in, unknown, or login is turned off', () => {
-    expect(bilibiliLoginWarning({ logged_in: true, cookies_browser: 'chrome' })).toBeNull()
+  it('stays quiet when logged in or unknown', () => {
+    expect(bilibiliLoginWarning({ logged_in: true, cookies_browser: 'chrome', login: 'browser' })).toBeNull()
     expect(bilibiliLoginWarning(null)).toBeNull()
-    expect(bilibiliLoginWarning({ logged_in: false, cookies_browser: '' })).toBeNull()
+  })
+})
+
+describe('qrLoginText', () => {
+  it('says what to do at each step', () => {
+    expect(qrLoginText('waiting')).toBe('用手机B站 App 扫一扫')
+    expect(qrLoginText('scanned')).toBe('已扫码，请在手机上确认登录')
+    expect(qrLoginText('done')).toBe('已登录')
+    expect(qrLoginText('expired')).toBe('二维码已过期')
+    expect(qrLoginText('failed')).toBe('登录没有成功，请重试')
   })
 })

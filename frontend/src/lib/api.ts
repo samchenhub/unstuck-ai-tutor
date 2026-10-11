@@ -66,9 +66,12 @@ export interface Part {
   imported: boolean
 }
 
+export type QrLoginState = 'waiting' | 'scanned' | 'expired' | 'done' | 'failed'
+
 export interface BilibiliStatus {
   logged_in: boolean
   cookies_browser: string
+  login: 'qr' | 'browser' | null // where the login comes from: the QR-code login, a browser's cookies, or none
 }
 
 export interface ChatMessage {
@@ -123,6 +126,12 @@ export const api = {
   playback: (id: string, quality = 720) => request<Playback>(`/api/videos/${id}/playback?quality=${quality}`),
   parts: (id: string) => request<Part[]>(`/api/videos/${id}/parts`),
   bilibiliStatus: () => request<BilibiliStatus>('/api/bilibili/status'),
+  bilibiliLoginStart: () => request<{ key: string; qr: string }>('/api/bilibili/login', { method: 'POST' }),
+  bilibiliLoginPoll: (key: string) => request<{ state: QrLoginState }>(`/api/bilibili/login/${encodeURIComponent(key)}`),
+  bilibiliLogout: async () => {
+    const res = await fetch('/api/bilibili/login', { method: 'DELETE' })
+    if (!res.ok) throw new ApiError(await readError(res), res.status)
+  },
 }
 
 /** POST a question and stream the answer. Always finishes with exactly one 'done' or 'error' event. */
