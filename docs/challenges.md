@@ -193,3 +193,30 @@
   2. 提问时：当前画面照旧实时截图理解，结果存成一张关键帧，下次附近提问直接复用；如果暂停前 90 秒内还没有理解过的画面，就当场理解一张，最多多一次调用。所有提问路径上的视觉调用都只试 1 次，被限流就直接跳过，不让回答等。
   3. 一个坑：免费额度下，同一时刻测试和使用会互相抢额度（实测一次提问因此 31 秒才开始出字），所以后台线程只用一个、并且给提问让路。
 - **代码**：`backend/unstuck/ingest/vision_worker.py`、`backend/unstuck/tutor/answer.py`、`backend/unstuck/tutor/frame.py`、`backend/unstuck/api/app.py`
+
+### 29. 让 Windows 也能用：在一台 Mac 上怎么知道 Windows 行不行
+- **问题**：开发只有一台 Mac，但很多用户用 Windows；代码里有没有只在 Mac/Linux 上才行的写法，靠看很难看全。
+- **解决**：在 GitHub Actions 上加自动测试，每次推送都在 Windows、macOS、Linux 三台机器上跑全部后端和前端测试，另外在 Windows 上用系统自带的 PowerShell 5.1 真正运行一遍启动脚本，确认前后端都能访问后自动关掉。第一次跑就暴露了几个问题（见下面几条），修完后三个系统都通过。
+- **代码**：`.github/workflows/ci.yml`
+
+### 30. Windows 上的文件和网络细节
+- **问题**：第一次在 Windows 上跑测试，B站下载相关的 30 个测试全部失败；启动脚本在 Windows 上一直等不到"已启动"。
+- **原因**：
+  1. 下载器用的 `os.pwrite`（在指定位置写文件）只有 Unix 有，Windows 没有。
+  2. Windows 不允许改名或删除另一个程序正打开着的文件；"边下载边转写"时 ffmpeg 正在读部分下载的音频，下载完成时的改名就会失败。
+  3. 启动脚本检查 `http://localhost:8000` 是否可访问，Windows 会先把 localhost 解析成 IPv6 的 `::1`，而服务只监听 IPv4 的 127.0.0.1，每次检查都先失败再超时。
+  4. Windows 自带的 PowerShell 5.1 把没有 BOM 的脚本当成本地编码读取，中文提示会变成乱码。
+- **解决**：没有 `os.pwrite` 时在锁里先定位再写；改名失败时短暂等待重试，清理失败则忽略；前后端都明确监听 127.0.0.1，检查也用 127.0.0.1；启动脚本保存为带 BOM 的 UTF-8 + Windows 换行（`.gitattributes` 固定下来），并设置 `PYTHONUTF8=1`。
+- **代码**：`backend/unstuck/sources/bilibili/download.py`、`start.ps1`、`Unstuck.bat`、`.gitattributes`
+
+### 31. 有的 Python 不能加载 SQLite 扩展
+- **问题**：自动测试里 macOS 那台机器上，后端几乎所有测试都报 `'sqlite3.Connection' object has no attribute 'enable_load_extension'`。
+- **原因**：uv 用了机器上已有的 Python，而这个 Python 编译时关闭了 SQLite 扩展加载（python.org 的 macOS 安装包也是这样）；Unstuck 的向量检索依赖 sqlite-vec 扩展。用户机器上同样可能遇到。
+- **解决**：在 `pyproject.toml` 里让 uv 只用它自己管理的 Python（`python-preference = "only-managed"`，这些构建都支持扩展加载）；万一还是遇到这种 Python，给出中文提示和修复命令，而不是一个看不懂的报错。
+- **代码**：`backend/pyproject.toml`、`backend/unstuck/db/__init__.py`
+
+### 32. Windows 上读不到 Chrome 的B站登录
+- **问题**：Unstuck 一直通过读取 Chrome 的 cookie 来使用B站登录；Windows 上这条路走不通。
+- **原因**：Chrome 在 Windows 上改用了"应用绑定加密"（app-bound encryption），其他程序基本无法解密它的 cookie；Firefox 还能读，但不能要求用户换浏览器。
+- **解决**：加了扫码登录：后端调用 B站网页版的扫码登录接口（生成二维码 → 每 2 秒查询：未扫码 / 已扫码待确认 / 已登录 / 已过期），登录成功后把 cookie 按 Netscape 格式保存到本地 `data/bilibili_cookies.txt`（POSIX 上只有自己可读，不写日志），B站客户端优先使用它；二维码由后端用纯 Python 的 segno 生成 SVG，前端不用新增依赖。Windows 上默认不再尝试读浏览器。Mac、Windows、Linux 都能用。
+- **代码**：`backend/unstuck/sources/bilibili/login.py`、`backend/unstuck/sources/bilibili/client.py`、`frontend/src/components/BiliLogin.tsx`
