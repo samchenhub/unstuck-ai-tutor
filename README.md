@@ -6,6 +6,19 @@ Unstuck is a one-on-one AI tutor that sits next to a YouTube **or Bilibili** lec
 
 Products I looked at only read the transcript; research systems understand frames but don't know where the viewer is. Unstuck combines both at the pause point.
 
+![Asking about a 3Blue1Brown lecture: the answer quotes the video and links back to the moments it covers](docs/images/ask-youtube.png)
+
+<table>
+  <tr>
+    <td width="50%"><img src="docs/images/ask-bilibili.png" alt="A Bilibili calculus lecture paused on the board: the tutor derives the formulas shown on screen, with rendered LaTeX and clickable timestamps"></td>
+    <td width="50%"><img src="docs/images/library.png" alt="The library: paste a YouTube or Bilibili link; multi-part Bilibili courses are grouped into one card"></td>
+  </tr>
+  <tr>
+    <td>Bilibili: paused on the board, the tutor derives the formulas on screen.</td>
+    <td>Paste a YouTube or Bilibili link; multi-part courses become one card.</td>
+  </tr>
+</table>
+
 ## How it works
 
 ```
