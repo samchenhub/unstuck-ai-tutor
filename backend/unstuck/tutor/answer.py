@@ -54,8 +54,8 @@ def _current_frame(
 
 
 def _transcript_until(video: Video) -> float | None:
-    """How far local transcription has got, while it is still running (None once the transcript is complete)."""
-    if video.stage_states.get("transcript") == "done" or video.transcribed_until <= 0:
+    """How far local transcription has got while it is still under way (None once done, or if it failed)."""
+    if video.stage_states.get("transcript") not in ("running", "pending") or video.transcribed_until <= 0:
         return None
     return video.transcribed_until
 

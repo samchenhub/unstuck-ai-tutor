@@ -42,12 +42,16 @@ def stage_metadata(ctx: StageContext) -> None:
     )
 
 
-def _publish_transcript(ctx: StageContext, cues: list[Cue], transcribed_until: float) -> None:
+def _publish_transcript(
+    ctx: StageContext, cues: list[Cue], transcribed_until: float, embeddings: dict[str, list[float]] | None = None
+) -> None:
     """Store the transcript so far with a transcript-only timeline + index, so the learner can ask right away;
-    the timeline/index stages rebuild it with visual information later."""
+    the timeline/index stages rebuild it with visual information later. `embeddings` carries vectors between
+    publishes of a growing transcript so only new segments are embedded."""
+    video = repo.get_video(ctx.conn, ctx.video_id)
+    segments = timeline.build_segments(cues, repo.get_keyframes(ctx.conn, ctx.video_id), video.duration)
+    indexer.publish_index(ctx.conn, ctx.llm, ctx.video_id, segments, {} if embeddings is None else embeddings)
     repo.replace_cues(ctx.conn, ctx.video_id, cues)
-    _rebuild_timeline(ctx)
-    indexer.build_index(ctx.conn, ctx.llm, ctx.video_id)
     repo.update_video(ctx.conn, ctx.video_id, ask_ready=True, transcribed_until=transcribed_until)
 
 
@@ -71,16 +75,17 @@ def _transcribe_locally(ctx: StageContext, src) -> None:
         log.info("no captions for %s, transcribing audio", ctx.video_id)
     audio = src.download_audio(ctx.video_id, ctx.video_dir)
     published = covered = start
+    embeddings: dict[str, list[float]] = {}
     for progress in transcribe.iter_transcript(audio, ctx.settings.whisper_model, start=start):
         cues.extend(progress.cues)
         covered = progress.covered_until
         due = FIRST_PUBLISH_S if published == 0 else PUBLISH_EVERY_S
         if cues and covered - published >= due:
-            _publish_transcript(ctx, cues, covered)
+            _publish_transcript(ctx, cues, covered, embeddings)
             published = covered
     if not cues:
         raise IngestError("NO_TRANSCRIPT", "没有字幕，语音转写也没有得到内容")
-    _publish_transcript(ctx, cues, covered)
+    _publish_transcript(ctx, cues, covered, embeddings)
 
 
 def stage_download(ctx: StageContext) -> None:

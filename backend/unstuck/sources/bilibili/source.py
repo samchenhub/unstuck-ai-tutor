@@ -28,9 +28,10 @@ def client_for(settings: Settings) -> BiliClient:
 class BilibiliSource:
     name = NAME
 
-    def __init__(self, client: BiliClient, clock=time.time):
+    def __init__(self, client: BiliClient, clock=time.time, sleep=time.sleep):
         self.client = client
         self._clock = clock
+        self._sleep = sleep
 
     def fetch_info(self, video_id: str) -> dict:
         bvid, part = parse.split_video_id(video_id)
@@ -65,7 +66,10 @@ class BilibiliSource:
             playback = self.playback(video_id)
             return [playback.url, *playback.backup_urls]
 
-        return download_ranges(mirrors, dest, headers=HEADERS)
+        path = download_ranges(mirrors, dest, headers=HEADERS, sleep=self._sleep)
+        # Transcription is finished by the time the MP4 is fetched (download stage); drop its audio-only copy.
+        (out_dir / "audio.m4a").unlink(missing_ok=True)
+        return path
 
     def download_audio(self, video_id: str, out_dir: Path) -> Path:
         """Only the DASH audio track (about a quarter of the MP4), so transcription starts sooner; the MP4 for
@@ -85,14 +89,12 @@ class BilibiliSource:
             return urls
 
         try:
-            first = audio_urls()
+            urls = iter([audio_urls()])  # the downloader asks for URLs up front and again after repeated failures
+            return download_ranges(lambda: next(urls, None) or audio_urls(), dest, headers=HEADERS, sleep=self._sleep)
         except IngestError as exc:
-            if exc.code != "PLAYBACK_UNAVAILABLE":
-                raise
-            log.info("no DASH audio for %s, downloading the MP4 instead", video_id)
+            # The MP4 route is slower but proven; any DASH problem (none offered, lookup or download failed) uses it.
+            log.warning("DASH audio failed for %s (%s), downloading the MP4 instead", video_id, exc.code)
             return self.download_video(video_id, out_dir)
-        urls = iter([first])  # the downloader asks for a URL up front and again after repeated failures
-        return download_ranges(lambda: next(urls, None) or audio_urls(), dest, headers=HEADERS)
 
     def playback(self, video_id: str, quality: int = 720) -> Playback:
         info = self.fetch_info(video_id)

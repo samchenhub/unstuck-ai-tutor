@@ -28,6 +28,10 @@ def fake_audio(monkeypatch):
     return audio
 
 
+def transcribe_all(path, model):
+    return [cue for progress in tr.iter_transcript(path, model) for cue in progress.cues]
+
+
 def _install_fake_model(monkeypatch, language, calls, loads=None):
     detect_kwargs = []
 
@@ -81,8 +85,8 @@ def test_model_is_loaded_once_per_name(monkeypatch, tmp_path, fake_audio):
     loads, calls = [], []
     _install_fake_model(monkeypatch, "en", calls, loads)
     audio = tmp_path / "a.m4a"
-    first = tr.transcribe(audio, "tiny")
-    tr.transcribe(audio, "tiny")
+    first = transcribe_all(audio, "tiny")
+    transcribe_all(audio, "tiny")
     assert loads == ["tiny"]
     assert [(c.start, c.end, c.text) for c in first] == [(0.0, 1.0, "hi")]
     tr._model.cache_clear()
@@ -91,7 +95,7 @@ def test_model_is_loaded_once_per_name(monkeypatch, tmp_path, fake_audio):
 def test_chinese_audio_gets_simplified_prompt(monkeypatch, tmp_path, fake_audio):
     calls = []
     detect_kwargs = _install_fake_model(monkeypatch, "zh", calls)
-    tr.transcribe(tmp_path / "a.m4a", "tiny")
+    transcribe_all(tmp_path / "a.m4a", "tiny")
     audio, kwargs = calls[0]
     assert isinstance(audio, np.ndarray)
     assert "简体中文" in kwargs["initial_prompt"]
@@ -104,7 +108,7 @@ def test_chinese_audio_gets_simplified_prompt(monkeypatch, tmp_path, fake_audio)
 def test_other_languages_get_no_prompt(monkeypatch, tmp_path, fake_audio):
     calls = []
     _install_fake_model(monkeypatch, "en", calls)
-    tr.transcribe(tmp_path / "a.m4a", "tiny")
+    transcribe_all(tmp_path / "a.m4a", "tiny")
     audio, kwargs = calls[0]
     assert isinstance(audio, np.ndarray)
     assert not kwargs.get("initial_prompt")
@@ -151,4 +155,35 @@ def test_iter_transcript_resumes_and_stops_past_the_end(monkeypatch, tmp_path):
     _install_fake_model(monkeypatch, "en", [])
     assert list(tr.iter_transcript(tmp_path / "a.m4a", "tiny", start=1234.0)) == []
     assert loads == [1234.0]
+    tr._model.cache_clear()
+
+
+def test_language_is_fixed_only_once_detection_is_confident(monkeypatch, tmp_path):
+    """A silent opening (VAD finds no speech) must not lock the whole video to a guessed language."""
+    lengths = {0.0: 10.0, 10.0: 10.0, 20.0: 4.0}
+    monkeypatch.setattr(tr, "load_audio", lambda path, sample_rate=16000, *, start=0.0, duration=None:
+                        np.zeros(int(lengths.get(start, 0.0) * 16000), dtype=np.float32))
+    detections = iter([("en", 0.39), ("zh", 0.95)])
+    detect_calls, calls = [], []
+
+    class FakeModel:
+        def __init__(self, name, **kwargs):
+            pass
+
+        def detect_language(self, audio, **kwargs):
+            detect_calls.append(kwargs)
+            language, probability = next(detections)
+            return language, probability, []
+
+        def transcribe(self, audio, **kwargs):
+            calls.append(kwargs)
+            return [], None
+
+    monkeypatch.setitem(sys.modules, "faster_whisper", SimpleNamespace(WhisperModel=FakeModel))
+    tr._model.cache_clear()
+    list(tr.iter_transcript(tmp_path / "a.m4a", "tiny", chunk_s=10.0))
+    assert len(detect_calls) == 2
+    assert "language" not in calls[0]  # unsure: let Whisper decide for this chunk only
+    assert calls[1]["language"] == calls[2]["language"] == "zh"
+    assert "简体中文" in calls[2]["initial_prompt"]
     tr._model.cache_clear()

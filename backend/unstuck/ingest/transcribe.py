@@ -10,7 +10,8 @@ from unstuck.models import Cue
 
 _SIMPLIFIED_PROMPT = "以下是普通话的句子，请使用简体中文。"
 SAMPLE_RATE = 16000
-CHUNK_S = 600.0  # decode 10 minutes at a time: bounded memory, and progress can be published as it goes
+CHUNK_S = 600.0
+MIN_LANGUAGE_PROBABILITY = 0.5  # silence/noise is detected as English at ~0.39; don't lock that in  # decode 10 minutes at a time: bounded memory, and progress can be published as it goes
 
 
 @dataclass(frozen=True)
@@ -57,14 +58,19 @@ def load_audio(
     return audio
 
 
-def _options(model, audio: np.ndarray) -> dict:
-    """Detect the language once (speech only) and fix it, so later chunks cannot drift to another language."""
-    language, _probability, _all = model.detect_language(audio, vad_filter=True)
+def _options(model, audio: np.ndarray) -> tuple[dict, bool]:
+    """Detect the language (speech only); returns the options and whether to keep them for later chunks.
+
+    A confident language is fixed so later chunks cannot drift; an unsure one (a silent intro) is not.
+    """
+    language, probability, _all = model.detect_language(audio, vad_filter=True)
+    if probability < MIN_LANGUAGE_PROBABILITY:
+        return {"vad_filter": True}, False
     options: dict = {"vad_filter": True, "language": language}
     if language == "zh":
         # Whisper tends to emit Traditional characters for Mandarin; a Simplified prompt steers it.
         options["initial_prompt"] = _SIMPLIFIED_PROMPT
-    return options
+    return options, True
 
 
 def iter_transcript(
@@ -82,9 +88,12 @@ def iter_transcript(
         seconds = len(audio) / SAMPLE_RATE
         if seconds < 0.5:  # past the end of the audio
             return
-        if options is None:
-            options = _options(model, audio)
-        segments, _info = model.transcribe(audio, **options)
+        chunk_options = options
+        if chunk_options is None:
+            chunk_options, confident = _options(model, audio)
+            if confident:
+                options = chunk_options
+        segments, _info = model.transcribe(audio, **chunk_options)
         for segment in segments:  # a lazy generator: segments arrive while Whisper works through the chunk
             text = segment.text.strip()
             if text:
@@ -95,7 +104,3 @@ def iter_transcript(
             return
         offset += chunk_s
 
-
-def transcribe(audio_path: Path, model_name: str) -> list[Cue]:
-    """The whole transcript at once (see `iter_transcript`)."""
-    return [cue for progress in iter_transcript(audio_path, model_name) for cue in progress.cues]

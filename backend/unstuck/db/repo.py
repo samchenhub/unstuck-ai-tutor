@@ -156,6 +156,27 @@ def replace_segments(conn: sqlite3.Connection, video_id: str, segments: list[Seg
     return get_segments(conn, video_id)
 
 
+def replace_index(
+    conn: sqlite3.Connection, video_id: str, segments: list[Segment], vectors: list[list[float]]
+) -> None:
+    """Swap a video's segments and their vectors in one transaction, so concurrent questions never see a
+    half-built (empty) index."""
+    with conn:
+        conn.executemany(
+            "DELETE FROM vec_segments WHERE segment_id = ?", [(i,) for i in _segment_ids(conn, video_id)]
+        )
+        conn.execute("DELETE FROM segments WHERE video_id = ?", (video_id,))
+        for seg, vec in zip(segments, vectors, strict=True):
+            cur = conn.execute(
+                "INSERT INTO segments (video_id, t_start, t_end, transcript, keyframe_ids) VALUES (?, ?, ?, ?, ?)",
+                (video_id, seg.start, seg.end, seg.transcript, json.dumps(seg.keyframe_ids)),
+            )
+            conn.execute(
+                "INSERT INTO vec_segments (segment_id, video_id, embedding) VALUES (?, ?, ?)",
+                (cur.lastrowid, video_id, serialize_float32(vec)),
+            )
+
+
 def get_segments(conn: sqlite3.Connection, video_id: str) -> list[Segment]:
     rows = conn.execute(
         "SELECT * FROM segments WHERE video_id = ? ORDER BY t_start", (video_id,)

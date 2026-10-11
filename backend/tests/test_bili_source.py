@@ -14,7 +14,8 @@ PLAYURL = {"code": 0, "data": {"durl": [{"url": "https://upos.bilivideo.com/v.mp
 
 
 def source(routes):
-    return BilibiliSource(BiliClient("chrome", fetch_json=FakeFetch(routes), sleep=lambda s: None, clock=lambda: 1.0e9))
+    return BilibiliSource(BiliClient("chrome", fetch_json=FakeFetch(routes), sleep=lambda s: None, clock=lambda: 1.0e9),
+                          sleep=lambda s: None)
 
 
 def base_routes(sub):
@@ -129,3 +130,29 @@ def test_video_download_reuses_the_file(monkeypatch, tmp_path):
     assert seen[0][1]["Referer"] == "https://www.bilibili.com/"
     assert src.download_video(f"{BV}_p2", out) == out / "video.mp4"
     assert len(seen) == n  # reused, no second download
+
+
+def test_audio_falls_back_to_the_mp4_when_the_dash_download_fails(monkeypatch, tmp_path):
+    seen = []
+
+    def opener(url, headers):
+        seen.append(url)
+        if "a-64.m4s" in url:
+            return 503, b"", None
+        start = int(headers["Range"].removeprefix("bytes=").split("-")[0])
+        return 206, b"mp4data"[start:], 7
+
+    monkeypatch.setattr("unstuck.sources.bilibili.download._open_range", opener)
+    src = source({"fnval=16": [DASH], **base_routes(GOOD_SUB)})
+    out = tmp_path / "vid"
+    assert src.download_audio(f"{BV}_p2", out) == out / "video.mp4"
+    assert not (out / "audio.m4a").exists()
+
+
+def test_video_download_removes_the_transcription_audio(monkeypatch, tmp_path):
+    fake_cdn(monkeypatch, {"v.mp4": b"mp4data"})
+    out = tmp_path / "vid"
+    out.mkdir()
+    (out / "audio.m4a").write_bytes(b"audiodata")
+    assert source(base_routes(GOOD_SUB)).download_video(f"{BV}_p2", out) == out / "video.mp4"
+    assert not (out / "audio.m4a").exists()  # transcription is done by the time the MP4 is downloaded
