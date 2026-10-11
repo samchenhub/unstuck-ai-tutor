@@ -48,10 +48,10 @@ if (-not (Test-Path 'frontend\node_modules')) {
 Write-Host '启动后端和前端…'
 # -NoNewWindow keeps both servers on this console, so closing the window stops them too.
 $backend = Start-Process -FilePath (Join-Path $PSScriptRoot 'backend\.venv\Scripts\uvicorn.exe') `
-    -ArgumentList 'unstuck.api.app:create_app', '--factory', '--port', '8000', '--log-level', 'warning' `
+    -ArgumentList 'unstuck.api.app:create_app', '--factory', '--host', '127.0.0.1', '--port', '8000', '--log-level', 'warning' `
     -WorkingDirectory (Join-Path $PSScriptRoot 'backend') -NoNewWindow -PassThru
 $frontend = Start-Process -FilePath 'node' `
-    -ArgumentList 'node_modules\vite\bin\vite.js', '--port', '5173', '--strictPort', '--logLevel', 'warn' `
+    -ArgumentList 'node_modules\vite\bin\vite.js', '--host', '127.0.0.1', '--port', '5173', '--strictPort', '--logLevel', 'warn' `
     -WorkingDirectory (Join-Path $PSScriptRoot 'frontend') -NoNewWindow -PassThru
 
 function Responds($url) {
@@ -67,7 +67,8 @@ try {
     $ready = $false
     for ($i = 0; $i -lt 90; $i++) {
         if ($backend.HasExited -or $frontend.HasExited) { break }
-        if ((Responds 'http://localhost:8000/api/health') -and (Responds 'http://localhost:5173')) { $ready = $true; break }
+        # 127.0.0.1, not localhost: Windows tries IPv6 (::1) first, where neither server listens.
+        if ((Responds 'http://127.0.0.1:8000/api/health') -and (Responds 'http://127.0.0.1:5173')) { $ready = $true; break }
         Start-Sleep -Seconds 1
     }
     if (-not $ready) {

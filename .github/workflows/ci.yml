@@ -56,6 +56,7 @@ jobs:
   launcher-windows:
     name: launcher (windows, Windows PowerShell 5.1)
     runs-on: windows-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v5
