@@ -95,7 +95,7 @@ def test_download_failure_degrades_to_transcript_only(ctx, monkeypatch):
 def test_keyframes_stage_stores_frames(ctx, monkeypatch):
     (ctx.video_dir / "video.mp4").write_bytes(b"fake")
     frames = [NewKeyframe(1.0, "/f/1.jpg", "0" * 16)]
-    monkeypatch.setattr(stages.keyframes, "extract_keyframes", lambda path, duration, out_dir: frames)
+    monkeypatch.setattr(stages.keyframes, "extract_keyframes", lambda path, duration, out_dir, **kw: frames)
     stages.stage_keyframes(ctx)
     assert [f.t for f in repo.get_keyframes(ctx.conn, VID)] == [1.0]
 
@@ -146,6 +146,8 @@ def test_unexpected_download_error_also_degrades_to_transcript_only(ctx, monkeyp
 
 class FakeSource:
     name = "fake"
+    frames_from_stream = False
+    stream_headers: dict = {}
 
     def __init__(self):
         self.downloaded = []
@@ -254,3 +256,35 @@ def test_transcription_uses_the_cloud_when_a_key_is_set(ctx, monkeypatch, tmp_pa
     repo.update_video(ctx.conn, VID, transcribed_until=0.0)
     stages.stage_transcript(ctx)
     assert seen[0] is None and seen[1] is not None and seen[1].language is None
+
+
+class StreamSource:
+    """A source whose frames come straight from the online stream (like Bilibili)."""
+
+    name = "bilibili"
+    frames_from_stream = True
+    stream_headers = {"Referer": "https://www.bilibili.com/"}
+
+    def download_video(self, video_id, out_dir):
+        raise AssertionError("streaming sources are not downloaded")
+
+    def playback(self, video_id, quality=720):
+        from unstuck.sources.base import Playback
+
+        return Playback(kind="mp4", url="https://cdn/v.mp4")
+
+
+def test_streaming_sources_skip_the_download_and_sample_the_stream(ctx, monkeypatch):
+    monkeypatch.setattr(stages, "_source", lambda ctx: StreamSource())
+    assert stages.stage_download(ctx) == SKIPPED
+    assert repo.get_video(ctx.conn, VID).visual_mode == "full"  # live frames still work
+    seen = {}
+
+    def fake_extract(video, duration, out_dir, headers=None):
+        seen.update(url=video(), headers=headers)
+        return [NewKeyframe(30.0, "/f/1.jpg", "0" * 16)]
+
+    monkeypatch.setattr(stages.keyframes, "extract_keyframes", fake_extract)
+    stages.stage_keyframes(ctx)
+    assert seen == {"url": "https://cdn/v.mp4", "headers": {"Referer": "https://www.bilibili.com/"}}
+    assert [f.t for f in repo.get_keyframes(ctx.conn, VID)] == [30.0]

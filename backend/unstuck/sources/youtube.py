@@ -16,6 +16,8 @@ class YouTubeSource:
     """Adapter over unstuck.ingest.youtube; looked up at call time so tests can monkeypatch it."""
 
     name = NAME
+    frames_from_stream = False  # googlevideo URLs need yt-dlp; frames come from the downloaded file
+    stream_headers: dict[str, str] = {}
 
     def fetch_info(self, video_id: str) -> dict:
         return yt.fetch_info(video_id)

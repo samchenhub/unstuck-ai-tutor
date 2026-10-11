@@ -142,6 +142,8 @@ class AudioFeed:
 
 class Source(Protocol):
     name: str
+    frames_from_stream: bool  # frames can be grabbed from the online stream (no full download needed)
+    stream_headers: dict[str, str]  # sent with stream requests (ffmpeg frame grabs)
 
     def fetch_info(self, video_id: str) -> dict: ...
 

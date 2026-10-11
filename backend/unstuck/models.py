@@ -9,12 +9,6 @@ class Cue:
 
 
 @dataclass(frozen=True)
-class Scene:
-    start: float
-    end: float
-
-
-@dataclass(frozen=True)
 class NewKeyframe:
     t: float
     image_path: str

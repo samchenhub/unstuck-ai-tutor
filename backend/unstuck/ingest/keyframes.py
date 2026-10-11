@@ -1,55 +1,31 @@
 import logging
-import math
 import shutil
+from collections.abc import Callable
 from pathlib import Path
 
 import imagehash
 from PIL import Image
 
 from unstuck import media
-from unstuck.models import NewKeyframe, Scene
+from unstuck.models import NewKeyframe
 
 log = logging.getLogger(__name__)
 
 
-def _merge_short(scenes: list[Scene], min_len: float) -> list[list[float]]:
-    merged: list[list[float]] = []
-    for scene in scenes:
-        if merged and (scene.end - scene.start < min_len or merged[-1][1] - merged[-1][0] < min_len):
-            merged[-1][1] = scene.end
-        else:
-            merged.append([scene.start, scene.end])
-    return merged
+SAMPLE_INTERVAL_S = 45.0
+MAX_FRAMES = 200
+_REFRESH_AFTER_FAILURES = 3
 
 
-def plan_sample_times(
-    scenes: list[Scene],
-    duration: float,
-    *,
-    min_len: float = 5.0,
-    max_len: float = 45.0,
-    avg_interval: float = 10.0,
-    max_frames: int = 300,
-) -> list[float]:
-    """Choose the timestamps to grab keyframes at.
+def sample_times(duration: float, interval: float = SAMPLE_INTERVAL_S, max_frames: int = MAX_FRAMES) -> list[float]:
+    """Evenly spaced frame times (centred in each interval); long videos get a longer interval, not more frames.
 
-    Scenes shorter than min_len are merged into a neighbour, scenes longer than
-    max_len are split evenly, one frame is sampled ~1 s into each piece, and the
-    result is thinned evenly to at most one frame per avg_interval seconds
-    (and never more than max_frames).
+    Even sampling replaced scene detection, which decoded the whole video on the CPU.
     """
-    spans = _merge_short(scenes, min_len) if scenes else [[0.0, duration]]
-    pieces: list[tuple[float, float]] = []
-    for start, end in spans:
-        n = max(1, math.ceil((end - start) / max_len))
-        step = (end - start) / n
-        pieces.extend((start + i * step, start + (i + 1) * step) for i in range(n))
-    times = [start + min(1.0, (end - start) / 2) for start, end in pieces]
-
-    cap = min(max_frames, max(1, int(duration // avg_interval)))
-    if len(times) > cap:
-        times = [times[int(i * len(times) / cap)] for i in range(cap)]
-    return times
+    step = max(interval, duration / max_frames)
+    if duration < step:
+        return [duration / 2]
+    return [(i + 0.5) * step for i in range(int(duration // step))]
 
 
 def dedupe_by_phash(frames: list[NewKeyframe], threshold: int = 5) -> list[NewKeyframe]:
@@ -64,24 +40,38 @@ def dedupe_by_phash(frames: list[NewKeyframe], threshold: int = 5) -> list[NewKe
     return kept
 
 
-def detect_scenes(video_path: Path) -> list[Scene]:
-    from scenedetect import ContentDetector, detect
+def extract_keyframes(
+    video: Path | str | Callable[[], str],
+    duration: float,
+    out_dir: Path,
+    *,
+    headers: dict[str, str] | None = None,
+) -> list[NewKeyframe]:
+    """Grab evenly spaced frames and drop near-duplicates (static slides, talking heads).
 
-    return [Scene(start.get_seconds(), end.get_seconds()) for start, end in detect(str(video_path), ContentDetector())]
-
-
-def extract_keyframes(video_path: Path, duration: float, out_dir: Path) -> list[NewKeyframe]:
+    `video` is a local file, or a function returning a fresh online stream URL (asked again after repeated
+    failures, e.g. an expired URL); `headers` go with stream requests.
+    """
     shutil.rmtree(out_dir, ignore_errors=True)
-    times = plan_sample_times(detect_scenes(video_path), duration)
+    refresh = video if callable(video) else None
+    source = refresh() if refresh else video
     candidates: list[NewKeyframe] = []
-    for t in times:
+    failures = 0
+    for t in sample_times(duration):
         try:
-            path = media.extract_frame(video_path, t, out_dir / f"{int(t * 1000):010d}.jpg")
+            path = media.extract_frame(source, t, out_dir / f"{int(t * 1000):010d}.jpg", headers=headers)
             with Image.open(path) as img:
                 phash = str(imagehash.phash(img))
         except Exception:
             log.warning("skipping keyframe at %.1fs", t, exc_info=True)
+            failures += 1
+            if refresh and failures % _REFRESH_AFTER_FAILURES == 0:
+                try:
+                    source = refresh()
+                except Exception:
+                    log.warning("could not refresh the stream URL for keyframes", exc_info=True)
             continue
+        failures = 0
         candidates.append(NewKeyframe(t=t, image_path=str(path), phash=phash))
 
     kept = dedupe_by_phash(candidates)

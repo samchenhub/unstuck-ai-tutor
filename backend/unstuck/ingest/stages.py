@@ -90,9 +90,12 @@ def _transcribe_locally(ctx: StageContext, src) -> None:
     _publish_transcript(ctx, cues, covered, embeddings)
 
 
-def stage_download(ctx: StageContext) -> None:
+def stage_download(ctx: StageContext) -> str | None:
+    src = _source(ctx)
+    if src.frames_from_stream:
+        return SKIPPED  # frames are grabbed from the online stream; no need for the whole video
     try:
-        _source(ctx).download_video(ctx.video_id, ctx.video_dir)
+        src.download_video(ctx.video_id, ctx.video_dir)
     except Exception:
         log.warning("download failed for %s, continuing transcript-only", ctx.video_id, exc_info=True)
         repo.update_video(ctx.conn, ctx.video_id, visual_mode="transcript_only")
@@ -103,11 +106,18 @@ def stage_download(ctx: StageContext) -> None:
 def stage_keyframes(ctx: StageContext) -> str | None:
     if _transcript_only(ctx):
         return SKIPPED
-    video_path = files.find_video_file(ctx.video_dir)
-    if video_path is None:
-        raise IngestError("DOWNLOAD_FAILED", "找不到已下载的视频文件")
     duration = repo.get_video(ctx.conn, ctx.video_id).duration
-    frames = keyframes.extract_keyframes(video_path, duration, ctx.video_dir / "frames")
+    out_dir = ctx.video_dir / "frames"
+    video_path = files.find_video_file(ctx.video_dir)
+    src = _source(ctx)
+    if video_path is not None:
+        frames = keyframes.extract_keyframes(video_path, duration, out_dir)
+    elif src.frames_from_stream:
+        frames = keyframes.extract_keyframes(
+            lambda: src.playback(ctx.video_id).url, duration, out_dir, headers=src.stream_headers
+        )
+    else:
+        raise IngestError("DOWNLOAD_FAILED", "找不到已下载的视频文件")
     repo.replace_keyframes(ctx.conn, ctx.video_id, frames)
     return None
 

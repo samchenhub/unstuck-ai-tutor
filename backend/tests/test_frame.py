@@ -57,6 +57,9 @@ def test_bilibili_without_local_file_uses_stream_url(conn, settings, sample_vide
     repo.insert_video(conn, "BV1Ex4y1G7nG_p1", "u", source="bilibili", course_id="BV1Ex4y1G7nG", part=1)
 
     class StreamSource:
+        frames_from_stream = True
+        stream_headers = {}
+
         def playback(self, video_id, quality=720):
             return Playback(kind="mp4", url=str(sample_video))  # ffmpeg reads a URL or a path alike
 
@@ -89,6 +92,9 @@ def test_stream_capture_sends_browser_headers(conn, settings, monkeypatch):
     repo.insert_video(conn, "BV1Ex4y1G7nG_p1", "u", source="bilibili", course_id="BV1Ex4y1G7nG", part=1)
 
     class StreamSource:
+        frames_from_stream = True
+        stream_headers = HEADERS
+
         def playback(self, video_id, quality=720):
             return Playback(kind="mp4", url="https://upos.bilivideo.com/v.mp4")
 
@@ -102,4 +108,4 @@ def test_local_file_capture_sends_no_headers(conn, settings, sample_video, monke
     install_video(settings, sample_video)
     calls = _record_extract(monkeypatch)
     live_frame_description(conn, FakeLLM(vision_responses=["x"]), settings, VID, 1.0, "q")
-    assert len(calls) == 1 and calls[0][1] == {}
+    assert len(calls) == 1 and calls[0][1] == {"headers": None}

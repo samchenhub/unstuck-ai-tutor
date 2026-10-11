@@ -7,7 +7,6 @@ from unstuck.config import Settings
 from unstuck.db import repo
 from unstuck.ingest import files
 from unstuck.llm.base import LLM
-from unstuck.sources.bilibili.client import HEADERS as STREAM_HEADERS
 
 log = logging.getLogger(__name__)
 
@@ -25,14 +24,12 @@ def live_frame_description(
         return cached
 
     video_dir = settings.video_dir(video_id)
-    frame_input = _frame_input(conn, settings, video_id, video_dir)
+    frame_input, headers = _frame_input(conn, settings, video_id, video_dir)
     if frame_input is None:
         return None
     image = video_dir / "live" / f"{second}.jpg"
     try:
-        # Bilibili's CDN answers 403 to ffmpeg's default User-Agent; local files need no headers.
-        extra = {"headers": STREAM_HEADERS} if isinstance(frame_input, str) else {}
-        media.extract_frame(frame_input, float(second), image, **extra)
+        media.extract_frame(frame_input, float(second), image, headers=headers)
         description = llm.vision(LIVE_FRAME_PROMPT.format(question=question), image, attempts=2).strip()
     except Exception:
         log.warning("live frame failed for %s at %ss", video_id, second, exc_info=True)
@@ -43,16 +40,21 @@ def live_frame_description(
     return description
 
 
-def _frame_input(conn: sqlite3.Connection, settings: Settings, video_id: str, video_dir: Path) -> Path | str | None:
-    """The downloaded file if there is one; otherwise the online stream for sources that allow it."""
+def _frame_input(
+    conn: sqlite3.Connection, settings: Settings, video_id: str, video_dir: Path
+) -> tuple[Path | str | None, dict[str, str] | None]:
+    """The downloaded file if there is one; otherwise the online stream (with its headers) where allowed."""
     local = files.find_video_file(video_dir)
     if local is not None:
-        return local
+        return local, None
     video = repo.get_video(conn, video_id)
-    if video is None or video.source == "youtube":
-        return None
+    if video is None:
+        return None, None
+    src = sources.for_video(video, settings)
+    if not src.frames_from_stream:
+        return None, None
     try:
-        return sources.for_video(video, settings).playback(video_id).url or None
+        return src.playback(video_id).url or None, src.stream_headers
     except Exception:
         log.warning("no stream URL for live frame of %s", video_id, exc_info=True)
-        return None
+        return None, None

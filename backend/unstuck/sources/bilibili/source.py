@@ -43,6 +43,8 @@ def client_for(settings: Settings) -> BiliClient:
 
 class BilibiliSource:
     name = NAME
+    frames_from_stream = True
+    stream_headers = HEADERS  # the CDN answers 403 to ffmpeg's own User-Agent
 
     def __init__(self, client: BiliClient, clock=time.time, sleep=time.sleep):
         self.client = client
