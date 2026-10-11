@@ -43,6 +43,7 @@ export interface Video {
   part_title: string
   parts_total: number
   thumbnail: string
+  transcribed_until: number
 }
 
 export interface Playback {

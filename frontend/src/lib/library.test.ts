@@ -6,7 +6,8 @@ function video(over: Partial<Video>): Video {
   return {
     id: 'dQw4w9WgXcQ', url: '', title: 'T', channel: 'C', duration: 60, status: 'ready', ask_ready: true,
     stage_states: {}, visual_mode: 'full', outline: null, error_code: null, error_message: null, created_at: '',
-    source: 'youtube', course_id: null, part: null, part_title: '', parts_total: 1, thumbnail: '', ...over,
+    source: 'youtube', course_id: null, part: null, part_title: '', parts_total: 1, thumbnail: '', transcribed_until: 0,
+    ...over,
   }
 }
 

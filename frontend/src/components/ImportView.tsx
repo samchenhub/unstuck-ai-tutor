@@ -1,13 +1,6 @@
 import { useState, type FormEvent } from 'react'
-import { STAGE_LABELS, STAGES, api, type StageState, type Video } from '../lib/api'
-
-const STATE_LABELS: Record<StageState, string> = {
-  pending: '等待',
-  running: '进行中',
-  done: '完成',
-  failed: '失败',
-  skipped: '跳过',
-}
+import { STAGE_LABELS, STAGES, api, type Video } from '../lib/api'
+import { importHeadline, stageStateLabel } from '../lib/progress'
 
 export function ImportForm({ onImported }: { onImported: (id: string) => void }) {
   const [url, setUrl] = useState('')
@@ -46,18 +39,12 @@ export function ImportForm({ onImported }: { onImported: (id: string) => void })
   )
 }
 
-function headline(video: Video): string {
-  if (video.status === 'failed') return '导入失败'
-  if (video.status === 'ready') return '导入完成，但有部分步骤失败'
-  return video.ask_ready ? '字幕已就绪，可以开始提问；画面理解还在后台进行' : '正在导入…'
-}
-
 export function ImportProgress({ video, onRetry }: { video: Video; onRetry: () => void }) {
   const canRetry = video.status !== 'importing'
   return (
     <div className="progress">
       <div className="progress-head">
-        <span>{headline(video)}</span>
+        <span>{importHeadline(video)}</span>
         {canRetry && (
           <button type="button" className="btn btn-small" onClick={onRetry}>
             重试
@@ -71,7 +58,7 @@ export function ImportProgress({ video, onRetry }: { video: Video; onRetry: () =
           return (
             <li key={stage} className={`stage stage-${state}`}>
               <span>{STAGE_LABELS[stage]}</span>
-              <span>{STATE_LABELS[state]}</span>
+              <span>{stageStateLabel(video, stage)}</span>
             </li>
           )
         })}
