@@ -52,3 +52,25 @@ jobs:
       - run: npm ci
       - run: npm test
       - run: npm run build
+
+  launcher-windows:
+    name: launcher (windows, Windows PowerShell 5.1)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Install ffmpeg
+        run: choco install ffmpeg -y --no-progress
+      - name: Write a test .env
+        shell: pwsh
+        run: |
+          Set-Content backend\.env "LLM_API_KEY=ci-test-key`nBILIBILI_COOKIES_BROWSER=`nUNSTUCK_DATA_DIR=data"
+      - name: Start with start.ps1 and check both servers answer
+        shell: cmd
+        env:
+          UNSTUCK_NO_OPEN: "1"
+          UNSTUCK_SMOKE_TEST: "1"
+        run: powershell -NoProfile -ExecutionPolicy Bypass -File start.ps1
