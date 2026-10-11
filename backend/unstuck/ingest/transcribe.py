@@ -28,14 +28,23 @@ def load_audio(path: Path, sample_rate: int = 16000) -> np.ndarray:
     except subprocess.CalledProcessError as exc:
         stderr = exc.stderr.decode(errors="replace").strip()
         raise RuntimeError(f"ffmpeg failed to decode audio: {stderr}") from exc
-    return np.frombuffer(result.stdout, np.int16).astype(np.float32) / 32768.0
+    except subprocess.TimeoutExpired as exc:
+        raise RuntimeError("ffmpeg timed out while decoding audio") from exc
+    except FileNotFoundError as exc:
+        raise RuntimeError("ffmpeg is not installed or not on PATH") from exc
+    stdout = result.stdout
+    del result
+    audio = np.frombuffer(stdout, np.int16).astype(np.float32)
+    del stdout  # the raw PCM is as large as the float copy; drop it before normalising in place
+    audio /= 32768.0
+    return audio
 
 
 def transcribe(audio_path: Path, model_name: str) -> list[Cue]:
     """Speech-to-text fallback for videos without captions (runs locally on CPU)."""
     model = _model(model_name)
     audio = load_audio(audio_path)
-    language, _probability, _all = model.detect_language(audio)
+    language, _probability, _all = model.detect_language(audio, vad_filter=True)
     options: dict = {"vad_filter": True}
     if language == "zh":
         # Whisper tends to emit Traditional characters for Mandarin; a Simplified prompt steers it.

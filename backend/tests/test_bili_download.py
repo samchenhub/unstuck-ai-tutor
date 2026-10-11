@@ -1,3 +1,5 @@
+import os
+
 import pytest
 
 from unstuck.errors import IngestError
@@ -165,3 +167,87 @@ def test_parallel_persistent_chunk_failure_raises_and_cleans_up(tmp_path):
     assert len(run.fetched) == 5
     assert not run.dest.exists()
     assert not run.dest.with_suffix(".mp4.part").exists()
+
+
+class NodeOpener:
+    """Serves `data`; `node(url)` -> max start offset (exclusive) that URL serves, else 403; `total(url)` -> reported size."""
+
+    def __init__(self, data, node=lambda url: None, total=None):
+        self.data, self.node, self.total, self.calls = data, node, total or (lambda url: len(data)), []
+
+    def __call__(self, url, headers):
+        start, end = parse_range(headers)
+        self.calls.append((url, start))
+        limit = self.node(url)
+        if limit is not None and start >= limit:
+            return 403, b"", None
+        return 206, self.data[start:end + 1], self.total(url)
+
+
+def test_refresh_budget_resets_after_steady_progress(tmp_path):
+    data = bytes(i % 251 for i in range(28 * CHUNK))
+    urls = "ABCDEFG"
+    # Every node dies after serving 4 more chunks: 6 refreshes in all, never 5 without progress between them.
+    opener = NodeOpener(data, node=lambda url: 4 * CHUNK * (urls.index(url) + 1))
+    run(opener, tmp_path)
+    assert run.dest.read_bytes() == data
+    assert run.fetched == list(urls)
+
+
+def test_refresh_budget_still_bounds_refreshes_without_progress(tmp_path):
+    opener = NodeOpener(BIG, node=lambda url: CHUNK)  # one chunk (< 4) of progress, then 403 forever
+    with pytest.raises(IngestError) as err:
+        run(opener, tmp_path)
+    assert err.value.code == "DOWNLOAD_FAILED"
+    assert len(run.fetched) == 5
+    assert not run.dest.exists()
+
+
+def test_refreshed_url_with_different_size_is_a_failure(tmp_path):
+    sizes = {"A": len(DATA), "B": len(DATA) + 1, "C": len(DATA)}
+    opener = NodeOpener(DATA, node=lambda url: CHUNK if url == "A" else None, total=lambda url: sizes[url])
+    run(opener, tmp_path)
+    assert run.dest.read_bytes() == DATA
+    assert run.fetched == ["A", "B", "C"]
+    assert run.sleeps == [2, 4]  # B served the wrong file three times; nothing from it was written
+
+
+def test_get_url_error_while_refreshing_counts_as_a_failure(tmp_path):
+    opener = NodeOpener(DATA, node=lambda url: CHUNK if url == "A" else None)
+    sleeps, calls = [], []
+
+    def get_url():
+        calls.append(1)
+        if len(calls) == 2:
+            raise IngestError("BILIBILI_BLOCKED", "blocked")
+        return "A" if len(calls) == 1 else "B"
+
+    dest = tmp_path / "video.mp4"
+    download_ranges(get_url, dest, headers={}, opener=opener, sleep=sleeps.append, chunk_size=CHUNK, workers=1)
+    assert dest.read_bytes() == DATA
+    assert len(calls) == 3 and sleeps == [2]
+
+
+def test_get_url_always_failing_is_bounded_and_reports_download_failed(tmp_path):
+    opener = NodeOpener(DATA, node=lambda url: CHUNK)
+    calls = []
+
+    def get_url():
+        calls.append(1)
+        if len(calls) > 1:
+            raise IngestError("BILIBILI_BLOCKED", "blocked")
+        return "A"
+
+    dest = tmp_path / "video.mp4"
+    with pytest.raises(IngestError) as err:
+        download_ranges(get_url, dest, headers={}, opener=opener, sleep=lambda _s: None, chunk_size=CHUNK, workers=1)
+    assert err.value.code == "DOWNLOAD_FAILED"
+    assert len(calls) == 5
+    assert not dest.exists()
+
+
+def test_short_pwrite_is_completed(tmp_path, monkeypatch):
+    real = os.pwrite
+    monkeypatch.setattr(os, "pwrite", lambda fd, data, pos: real(fd, bytes(data)[:100], pos))
+    run(Opener(), tmp_path)
+    assert run.dest.read_bytes() == DATA

@@ -72,7 +72,7 @@ def parse_url(url: str) -> tuple[str, int]:
     if host not in _SITE_HOSTS or len(segments) < 2 or segments[0] != "video" or not BVID_RE.fullmatch(segments[1]):
         raise IngestError("INVALID_URL", INVALID_MESSAGE)
     page = (urllib.parse.parse_qs(parsed.query).get("p") or ["1"])[0]
-    if not page.isdigit() or not 1 <= int(page) <= 9999:
+    if not (page.isascii() and page.isdigit()) or not 1 <= int(page) <= 9999:
         raise IngestError("INVALID_URL", INVALID_MESSAGE)
     return segments[1], int(page)
 
@@ -134,7 +134,7 @@ def meta_from_info(info: dict, max_duration_s: int) -> VideoMeta:
 
 
 def pick_subtitle_url(subtitles: list[dict]) -> str | None:
-    """Prefer an uploader-made Chinese track, then the AI Chinese one, then anything."""
+    """Prefer an uploader-made Chinese track, then the AI Chinese one; other languages fall back to Whisper."""
 
     def rank(sub: dict) -> int:
         lan = sub.get("lan") or ""
@@ -144,7 +144,7 @@ def pick_subtitle_url(subtitles: list[dict]) -> str | None:
             return 1
         return 2
 
-    usable = sorted((s for s in subtitles if s.get("subtitle_url")), key=rank)
+    usable = sorted((s for s in subtitles if s.get("subtitle_url") and rank(s) < 2), key=rank)
     return _https(usable[0]["subtitle_url"]) if usable else None
 
 
@@ -165,9 +165,9 @@ def mp4_playback(data: dict, duration: float, now: float) -> Playback:
     durl = data.get("durl") or []
     if not durl or not durl[0].get("url"):
         raise IngestError("PLAYBACK_UNAVAILABLE", "B站没有返回可播放的视频地址")
-    url = durl[0]["url"]
+    url = _https(durl[0]["url"])
     deadline = (urllib.parse.parse_qs(urllib.parse.urlparse(url).query).get("deadline") or [""])[0]
-    expires_at = float(deadline) if deadline.isdigit() else now + DEFAULT_URL_LIFETIME_S
+    expires_at = float(deadline) if deadline.isascii() and deadline.isdigit() else now + DEFAULT_URL_LIFETIME_S
     return Playback(kind="mp4", url=url, expires_at=expires_at, duration=duration)
 
 

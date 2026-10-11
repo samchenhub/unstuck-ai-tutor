@@ -29,12 +29,15 @@ def fake_audio(monkeypatch):
 
 
 def _install_fake_model(monkeypatch, language, calls, loads=None):
+    detect_kwargs = []
+
     class FakeModel:
         def __init__(self, name, **kwargs):
             if loads is not None:
                 loads.append(name)
 
-        def detect_language(self, audio):
+        def detect_language(self, audio, **kwargs):
+            detect_kwargs.append(kwargs)
             return language, 0.9, []
 
         def transcribe(self, audio, **kwargs):
@@ -43,6 +46,7 @@ def _install_fake_model(monkeypatch, language, calls, loads=None):
 
     monkeypatch.setitem(sys.modules, "faster_whisper", SimpleNamespace(WhisperModel=FakeModel))
     tr._model.cache_clear()
+    return detect_kwargs
 
 
 def test_load_audio_returns_16k_mono_float32(tone_wav):
@@ -60,6 +64,19 @@ def test_load_audio_reports_ffmpeg_errors(tmp_path):
         tr.load_audio(tmp_path / "missing.m4a")
 
 
+@pytest.mark.parametrize("error", [
+    subprocess.TimeoutExpired(["ffmpeg"], 600),
+    FileNotFoundError(2, "No such file or directory: 'ffmpeg'"),
+])
+def test_load_audio_wraps_ffmpeg_launch_failures(monkeypatch, tmp_path, error):
+    def boom(*args, **kwargs):
+        raise error
+
+    monkeypatch.setattr(tr.subprocess, "run", boom)
+    with pytest.raises(RuntimeError, match="ffmpeg"):
+        tr.load_audio(tmp_path / "a.m4a")
+
+
 def test_model_is_loaded_once_per_name(monkeypatch, tmp_path, fake_audio):
     loads, calls = [], []
     _install_fake_model(monkeypatch, "en", calls, loads)
@@ -73,12 +90,13 @@ def test_model_is_loaded_once_per_name(monkeypatch, tmp_path, fake_audio):
 
 def test_chinese_audio_gets_simplified_prompt(monkeypatch, tmp_path, fake_audio):
     calls = []
-    _install_fake_model(monkeypatch, "zh", calls)
+    detect_kwargs = _install_fake_model(monkeypatch, "zh", calls)
     tr.transcribe(tmp_path / "a.m4a", "tiny")
     audio, kwargs = calls[0]
     assert isinstance(audio, np.ndarray)
     assert "简体中文" in kwargs["initial_prompt"]
     assert kwargs["language"] == "zh"
+    assert detect_kwargs == [{"vad_filter": True}]  # speech-only language detection
     assert kwargs["vad_filter"] is True
     tr._model.cache_clear()
 

@@ -35,6 +35,7 @@ def test_parse_url(url, expected):
     ("https://www.bilibili.com/list/watchlater", "UNSUPPORTED_URL"),
     ("https://www.bilibili.com/video/av989935671", "INVALID_URL"),
     (f"https://www.bilibili.com/video/{BV}?p=0", "INVALID_URL"),
+    (f"https://www.bilibili.com/video/{BV}?p=%C2%B2", "INVALID_URL"),
     ("https://www.bilibili.com/", "INVALID_URL"),
 ])
 def test_parse_url_rejects(url, code):
@@ -110,6 +111,8 @@ def test_pick_subtitle_prefers_uploader_chinese():
     assert parse.pick_subtitle_url(subs) == "https://i0.hdslb.com/human.json"
     assert parse.pick_subtitle_url(subs[:1]) == "https://aisubtitle.hdslb.com/ai.json"
     assert parse.pick_subtitle_url([{"lan": "ai-zh", "subtitle_url": ""}]) is None
+    assert parse.pick_subtitle_url(subs[2:]) is None  # non-Chinese tracks fall back to Whisper
+    assert parse.pick_subtitle_url([{"lan": "ja", "subtitle_url": "//i0.hdslb.com/ja.json"}]) is None
     assert parse.pick_subtitle_url([]) is None
 
 
@@ -139,6 +142,18 @@ def test_mp4_playback():
     with pytest.raises(IngestError) as err:
         parse.mp4_playback({"durl": []}, 10.0, now=0)
     assert err.value.code == "PLAYBACK_UNAVAILABLE"
+
+
+def test_mp4_playback_upgrades_insecure_urls():
+    http = {"durl": [{"url": "http://upos.bilivideo.com/x.mp4?deadline=5"}]}
+    assert parse.mp4_playback(http, 10.0, now=0).url == "https://upos.bilivideo.com/x.mp4?deadline=5"
+    relative = {"durl": [{"url": "//upos.bilivideo.com/x.mp4"}]}
+    assert parse.mp4_playback(relative, 10.0, now=0).url == "https://upos.bilivideo.com/x.mp4"
+
+
+def test_mp4_playback_ignores_non_ascii_deadline():
+    data = {"durl": [{"url": "https://upos.bilivideo.com/x.mp4?deadline=%C2%B2"}]}
+    assert parse.mp4_playback(data, 10.0, now=100.0).expires_at == 100.0 + 3600
 
 
 def test_parts_from_view():

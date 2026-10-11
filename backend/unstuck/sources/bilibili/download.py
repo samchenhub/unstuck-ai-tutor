@@ -24,6 +24,7 @@ log = logging.getLogger(__name__)
 
 _TIMEOUT_S = 30
 _FAILURES = (OSError, urllib.error.URLError, TimeoutError, http.client.HTTPException)
+_PROGRESS_CHUNKS = 4
 _TOTAL = re.compile(r"/(\d+)\s*$")
 
 Opener = Callable[[str, dict[str, str]], tuple[int, bytes, int | None]]
@@ -55,8 +56,20 @@ def _fail() -> IngestError:
     return IngestError("DOWNLOAD_FAILED", "视频下载失败")
 
 
+def _write_at(fd: int, data: bytes, pos: int) -> None:
+    """`os.pwrite` may write less than asked; keep going until the whole buffer is on disk."""
+    view = memoryview(data)
+    while view:
+        written = os.pwrite(fd, view, pos)
+        view, pos = view[written:], pos + written
+
+
 class _Download:
-    """State shared by the chunk workers: current URL (refreshed at most once per failure), total size, output fd."""
+    """State shared by the chunk workers: current URL (refreshed at most once per failure), total size, output fd.
+
+    The refresh budget guards against a URL that never works, not against a long download: it is restored
+    whenever `chunk_size * _PROGRESS_CHUNKS` bytes have been written since the last refresh.
+    """
 
     def __init__(self, get_url, fd, headers, chunk_size, attempts_per_url, max_refreshes, opener, sleep):
         self.get_url, self.fd, self.headers, self.chunk_size = get_url, fd, headers, chunk_size
@@ -64,6 +77,7 @@ class _Download:
         self.lock = threading.Lock()
         self.abort = threading.Event()
         self.refreshes = 0
+        self.progress = 0  # bytes written since the last refresh
         self.total: int | None = None
         self.url = get_url()
 
@@ -74,8 +88,20 @@ class _Download:
                 self.refreshes += 1
                 if self.refreshes > self.max_refreshes:
                     raise _fail()
-                self.url = self.get_url()
+                self.progress = 0
+                try:
+                    self.url = self.get_url()
+                except (IngestError, *_FAILURES) as exc:
+                    # No fresh URL right now (e.g. Bilibili blocked the request): count it as a failed attempt.
+                    log.warning("bilibili URL refresh failed: %s", exc)
+                    self.sleep(2)
             return self.url
+
+    def wrote(self, count: int) -> None:
+        with self.lock:
+            self.progress += count
+            if self.progress >= self.chunk_size * _PROGRESS_CHUNKS:
+                self.refreshes = self.progress = 0
 
     def chunk(self, start: int) -> int:
         """Fetch bytes [start, start + chunk_size) into the file, resuming after partial reads; returns end offset."""
@@ -92,6 +118,10 @@ class _Download:
             except _FAILURES as exc:
                 log.warning("bilibili download error at byte %d: %s", pos, exc)
                 status, body, size = 0, b"", None
+            if size is not None and self.total is not None and size != self.total:
+                # A refreshed URL must serve the same file; never mix bytes from a different one.
+                log.warning("bilibili download size mismatch: %d != %d", size, self.total)
+                status, body = 0, b""
             if status == 403:
                 url, failures = self.refresh(url), 0
                 continue
@@ -99,13 +129,12 @@ class _Download:
             if status < 400 and body and not (status == 200 and pos):
                 if status != 200:
                     body = body[:start + self.chunk_size - pos]
-                os.pwrite(self.fd, body, pos)
+                _write_at(self.fd, body, pos)
+                self.wrote(len(body))
                 pos += len(body)
                 failures = 0
-                if size is not None:
-                    self.total = size
-                elif status == 200:
-                    self.total = pos
+                if self.total is None:
+                    self.total = size if size is not None else (pos if status == 200 else None)
                 continue
             failures += 1
             log.warning("bilibili download failure %d at byte %d (status %s)", failures, pos, status)
