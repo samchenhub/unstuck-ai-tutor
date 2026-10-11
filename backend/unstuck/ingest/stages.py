@@ -3,7 +3,7 @@ import logging
 from unstuck import sources
 from unstuck.db import repo
 from unstuck.errors import IngestError
-from unstuck.ingest import cloud_asr, files, indexer, keyframes, outline, timeline, transcribe, vision
+from unstuck.ingest import cloud_asr, files, indexer, keyframes, outline, timeline, transcribe
 from unstuck.ingest.pipeline import SKIPPED, StageContext, StageFn
 from unstuck.models import Cue
 
@@ -122,19 +122,6 @@ def stage_keyframes(ctx: StageContext) -> str | None:
     return None
 
 
-def stage_vision(ctx: StageContext) -> str | None:
-    if _transcript_only(ctx):
-        return SKIPPED
-    failed = vision.describe_pending(
-        ctx.llm,
-        repo.get_keyframes(ctx.conn, ctx.video_id),
-        lambda frame_id, desc: repo.save_frame_description(ctx.conn, frame_id, desc),
-    )
-    if failed:
-        raise IngestError("VISION_PARTIAL", f"{failed} 张关键帧的画面理解失败，可以重试")
-    return None
-
-
 def stage_timeline(ctx: StageContext) -> None:
     _rebuild_timeline(ctx)
 
@@ -158,7 +145,6 @@ DEFAULT_STAGES: dict[str, StageFn] = {
     "transcript": stage_transcript,
     "download": stage_download,
     "keyframes": stage_keyframes,
-    "vision": stage_vision,
     "timeline": stage_timeline,
     "index": stage_index,
     "outline": stage_outline,

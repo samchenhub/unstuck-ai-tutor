@@ -8,6 +8,7 @@ from concurrent.futures import Future, ThreadPoolExecutor
 from unstuck.config import Settings
 from unstuck.db import connect, repo
 from unstuck.ingest.pipeline import Pipeline, StageContext
+from unstuck.ingest.vision_worker import VisionWorker
 from unstuck.llm.base import LLM
 
 log = logging.getLogger(__name__)
@@ -22,7 +23,7 @@ class PipelineRunner:
 
     def __init__(
         self, settings: Settings, get_llm: Callable[[], LLM], pipeline: Pipeline | None = None, max_workers: int = 2,
-        *, timer=threading.Timer, clock: Callable[[], float] = time.time,
+        *, timer=threading.Timer, clock: Callable[[], float] = time.time, vision=None,
     ):
         self._settings = settings
         self._get_llm = get_llm
@@ -34,6 +35,8 @@ class PipelineRunner:
         self._clock = clock
         self._timers: dict[str, object] = {}
         self._closed = False
+        self._vision = vision if vision is not None else VisionWorker(settings, get_llm)
+        self._vision.start()
 
     def submit(self, video_id: str) -> Future | None:
         with self._lock:
@@ -49,6 +52,8 @@ class PipelineRunner:
             ctx = StageContext(conn=conn, llm=self._get_llm(), settings=self._settings, video_id=video_id)
             rate_limited = self._pipeline.run(ctx)
             self._plan_retry(conn, video_id, bool(rate_limited))
+            if _has_pending_frames(conn, video_id):
+                self._vision.enqueue(video_id)
         except Exception as exc:
             log.exception("pipeline crashed for %s", video_id)
             self._mark_failed(conn, video_id, exc)
@@ -96,11 +101,19 @@ class PipelineRunner:
             handle.cancel()
 
     def schedule_pending(self, conn: sqlite3.Connection) -> None:
-        """Re-plan automatic retries that were pending when the app stopped."""
+        """Pick up what was pending when the app stopped: planned retries and frames still to describe."""
         now = self._clock()
         for video in repo.list_videos(conn):
-            if video.auto_retry_at > 0 and video.status != "importing":
+            if video.status == "importing":
+                continue  # resubmitted at startup; its run plans its own follow-ups
+            if video.auto_retry_at > 0:
                 self._schedule(video.id, max(0.0, video.auto_retry_at - now))
+            if _has_pending_frames(conn, video.id):
+                self._vision.enqueue(video.id)
+
+    def yield_to_user(self, seconds: float = 30.0) -> None:
+        """A question is about to use the vision model: hold the background describer back for a while."""
+        self._vision.yield_to_user(seconds)
 
     def _mark_failed(self, conn, video_id: str, exc: Exception) -> None:
         if conn is None:  # the database itself was unreachable; nothing can be recorded
@@ -116,4 +129,9 @@ class PipelineRunner:
             timers, self._timers = list(self._timers.values()), {}
         for handle in timers:
             handle.cancel()
+        self._vision.stop()
         self._executor.shutdown(wait=False, cancel_futures=True)
+
+
+def _has_pending_frames(conn: sqlite3.Connection, video_id: str) -> bool:
+    return any(f.status == "pending" for f in repo.get_keyframes(conn, video_id))

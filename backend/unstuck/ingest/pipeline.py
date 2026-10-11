@@ -11,7 +11,8 @@ from unstuck.llm.base import LLM, ModelBusyError
 
 log = logging.getLogger(__name__)
 
-STAGES = ("metadata", "transcript", "download", "keyframes", "vision", "timeline", "index", "outline")
+# Keyframes are described afterwards by the background VisionWorker (state "vision"), at the free tier's pace.
+STAGES = ("metadata", "transcript", "download", "keyframes", "timeline", "index", "outline")
 CRITICAL = frozenset({"metadata", "transcript"})
 SKIPPED = "skipped"
 _FINISHED = ("done", SKIPPED)
@@ -53,12 +54,18 @@ class Pipeline:
             raise ValueError(f"missing stage functions: {sorted(missing)}")
         self._stages = dict(stages)
 
+    @staticmethod
+    def _merged(ctx: StageContext, states: dict[str, str]) -> dict[str, str]:
+        """Our stage states over the stored ones, keeping keys others own (the background vision job's)."""
+        current = repo.get_video(ctx.conn, ctx.video_id).stage_states
+        return {**current, **{name: states[name] for name in STAGES}}
+
     def run(self, ctx: StageContext) -> bool:
         """Run the unfinished stages; returns True if a stage failed because the model was rate-limited."""
         video = repo.get_video(ctx.conn, ctx.video_id)
         if video is None:
             raise ValueError(f"unknown video {ctx.video_id}")
-        states = {name: video.stage_states.get(name, "pending") for name in STAGES}
+        states = {**video.stage_states, **{name: video.stage_states.get(name, "pending") for name in STAGES}}
         start = next((i for i, name in enumerate(STAGES) if states[name] not in _FINISHED), None)
         if start is None:
             repo.update_video(ctx.conn, ctx.video_id, status="ready")
@@ -67,14 +74,15 @@ class Pipeline:
         for name in STAGES[start:]:
             states[name] = "pending"
         repo.update_video(
-            ctx.conn, ctx.video_id, status="importing", stage_states=states, error_code=None, error_message=None
+            ctx.conn, ctx.video_id, status="importing", stage_states=self._merged(ctx, states),
+            error_code=None, error_message=None,
         )
 
         last_error: tuple[str, str] | None = None
         rate_limited = False
         for name in STAGES[start:]:
             states[name] = "running"
-            repo.update_video(ctx.conn, ctx.video_id, stage_states=states)
+            repo.update_video(ctx.conn, ctx.video_id, stage_states=self._merged(ctx, states))
             try:
                 result = self._stages[name](ctx)
                 states[name] = SKIPPED if result == SKIPPED else "done"
@@ -85,15 +93,16 @@ class Pipeline:
                 rate_limited = rate_limited or isinstance(exc, ModelBusyError)
                 if name in CRITICAL:
                     repo.update_video(
-                        ctx.conn, ctx.video_id, status="failed", stage_states=states,
+                        ctx.conn, ctx.video_id, status="failed", stage_states=self._merged(ctx, states),
                         error_code=code, error_message=message,
                     )
                     return rate_limited
                 last_error = (code, message)
-            repo.update_video(ctx.conn, ctx.video_id, stage_states=states)
+            repo.update_video(ctx.conn, ctx.video_id, stage_states=self._merged(ctx, states))
 
         code, message = last_error or (None, None)
         repo.update_video(
-            ctx.conn, ctx.video_id, status="ready", stage_states=states, error_code=code, error_message=message
+            ctx.conn, ctx.video_id, status="ready", stage_states=self._merged(ctx, states),
+            error_code=code, error_message=message,
         )
         return rate_limited

@@ -49,16 +49,16 @@ def test_resumes_after_completed_stages(ctx):
     repo.update_video(ctx.conn, VID, stage_states={"metadata": "done", "transcript": "done", "download": "done"})
     order = []
     Pipeline(recording(order)).run(ctx)
-    assert order == ["keyframes", "vision", "timeline", "index", "outline"]
+    assert order == ["keyframes", "timeline", "index", "outline"]
 
 
 def test_rerunning_a_stage_resets_downstream_stages(ctx):
     states = {name: "done" for name in STAGES}
-    states["vision"] = "failed"
+    states["timeline"] = "failed"
     repo.update_video(ctx.conn, VID, stage_states=states)
     order = []
     Pipeline(recording(order)).run(ctx)
-    assert order == ["vision", "timeline", "index", "outline"]
+    assert order == ["timeline", "index", "outline"]
 
 
 def test_running_state_left_by_a_crash_is_resumed(ctx):
@@ -83,11 +83,11 @@ def test_critical_failure_stops_the_run(ctx):
 
 def test_non_critical_failure_continues(ctx):
     order = []
-    Pipeline(recording(order, {"vision": raise_(RuntimeError("model down"))})).run(ctx)
+    Pipeline(recording(order, {"keyframes": raise_(RuntimeError("model down"))})).run(ctx)
     video = repo.get_video(ctx.conn, VID)
     assert order == list(STAGES)
     assert video.status == "ready"
-    assert video.stage_states["vision"] == "failed"
+    assert video.stage_states["keyframes"] == "failed"
     assert video.stage_states["outline"] == "done"
     assert video.error_code == "STAGE_FAILED"
     assert "model down" in video.error_message
@@ -130,8 +130,15 @@ def test_stage_context_creates_video_dir(ctx, settings):
 
 
 def test_run_reports_whether_a_stage_was_rate_limited(ctx):
-    assert Pipeline(recording([], {"vision": raise_(ModelBusyError("x"))})).run(ctx) is True
+    assert Pipeline(recording([], {"outline": raise_(ModelBusyError("x"))})).run(ctx) is True
     repo.update_video(ctx.conn, VID, stage_states={})
     assert Pipeline(recording([], {"outline": raise_(IngestError("OUTLINE_FAILED", "x"))})).run(ctx) is False
     repo.update_video(ctx.conn, VID, stage_states={})
     assert Pipeline(recording([])).run(ctx) is False
+
+
+def test_states_written_by_the_background_vision_job_are_kept(ctx):
+    repo.update_video(ctx.conn, VID, stage_states={"vision": "running"})
+    Pipeline(recording([])).run(ctx)
+    assert repo.get_video(ctx.conn, VID).stage_states["vision"] == "running"
+    assert "vision" not in STAGES  # described in the background, not as a pipeline stage

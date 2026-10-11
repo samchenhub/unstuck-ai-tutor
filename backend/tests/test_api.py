@@ -21,6 +21,9 @@ class FakeRunner:
     def schedule_pending(self, conn):
         self.scheduled = True
 
+    def yield_to_user(self, seconds=30.0):
+        self.yielded = True
+
     def shutdown(self):
         pass
 
@@ -106,12 +109,13 @@ def test_ask_validates_input(client, seeded_video, body):
     assert client.post(f"/api/videos/{seeded_video}/ask", json=body).status_code == 422
 
 
-def test_ask_streams_answer_and_saves_chats(client, seeded_video, fake_llm):
+def test_ask_streams_answer_and_saves_chats(client, seeded_video, fake_llm, runner):
     fake_llm.chat_responses.append("Because [01:40] shows the formula.")
 
     r = client.post(f"/api/videos/{seeded_video}/ask", json={"question": "Why?", "t": 110})
 
     assert r.status_code == 200
+    assert runner.yielded  # background vision steps aside for the question
     assert r.headers["content-type"].startswith("text/event-stream")
     events = sse_events(r.text)
     assert "".join(e["text"] for e in events if e["type"] == "delta") == "Because [01:40] shows the formula."
@@ -218,3 +222,15 @@ def test_manual_retry_restarts_the_automatic_retry_count(client, conn, runner):
     repo.update_video(conn, "dQw4w9WgXcQ", status="ready", auto_retries=5)
     assert client.post("/api/videos/dQw4w9WgXcQ/retry").status_code == 202
     assert repo.get_video(conn, "dQw4w9WgXcQ").auto_retries == 0
+
+
+def test_videos_report_how_many_frames_are_described(client, conn):
+    from unstuck.models import FrameDescription, NewKeyframe
+
+    repo.insert_video(conn, "dQw4w9WgXcQ", "https://www.youtube.com/watch?v=dQw4w9WgXcQ")
+    first, _second = repo.replace_keyframes(conn, "dQw4w9WgXcQ", [
+        NewKeyframe(1.0, "/f/1.jpg", "0" * 16), NewKeyframe(50.0, "/f/2.jpg", "f" * 16)])
+    repo.save_frame_description(conn, first.id, FrameDescription("slide", "s", "", ""))
+    video = client.get("/api/videos/dQw4w9WgXcQ").json()
+    assert (video["frames_described"], video["frames_total"]) == (1, 2)
+    assert client.get("/api/videos").json()[0]["frames_total"] == 2

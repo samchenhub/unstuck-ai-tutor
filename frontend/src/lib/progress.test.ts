@@ -1,13 +1,13 @@
 import { describe, expect, it } from 'vitest'
 import type { Video } from './api'
-import { importHeadline, stageStateLabel } from './progress'
+import { importHeadline, stageStateLabel, visionInBackground } from './progress'
 
 function video(over: Partial<Video>): Video {
   return {
     id: 'BV1Ex4y1G7nG_p1', url: '', title: 'T', channel: 'C', duration: 6298, status: 'importing', ask_ready: false,
     stage_states: {}, visual_mode: 'full', outline: null, error_code: null, error_message: null, created_at: '',
     source: 'bilibili', course_id: 'BV1Ex4y1G7nG', part: 1, part_title: '', parts_total: 1, thumbnail: '',
-    transcribed_until: 0, auto_retry_at: 0, auto_retries: 0, ...over,
+    transcribed_until: 0, auto_retry_at: 0, auto_retries: 0, frames_described: 0, frames_total: 0, ...over,
   }
 }
 
@@ -53,5 +53,21 @@ describe('automatic retry after a rate limit', () => {
     expect(importHeadline({ ...limited, auto_retry_at: 1_000_000 - 5 }, 1_000_000 * 1000)).toBe(
       '免费模型暂时限流，马上自动重试画面理解、大纲；现在已经可以提问',
     )
+  })
+})
+
+describe('background vision', () => {
+  it('shows how many frames are described', () => {
+    const v = video({ status: 'ready', stage_states: { vision: 'running' }, frames_described: 12, frames_total: 80 })
+    expect(stageStateLabel(v, 'vision')).toBe('12/80')
+    expect(stageStateLabel({ ...v, stage_states: { vision: 'done' } }, 'vision')).toBe('完成')
+    expect(stageStateLabel({ ...v, stage_states: {} }, 'vision')).toBe('等待')
+  })
+
+  it('says the import is done while frames are still being described', () => {
+    const v = video({ status: 'ready', ask_ready: true, stage_states: { vision: 'running' }, frames_described: 12, frames_total: 80 })
+    expect(importHeadline(v)).toBe('导入完成；画面还在后台慢慢理解（12/80），不影响提问')
+    expect(visionInBackground(v)).toBe(true)
+    expect(visionInBackground({ ...v, stage_states: { vision: 'done' } })).toBe(false)
   })
 })

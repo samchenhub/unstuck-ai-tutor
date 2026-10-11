@@ -96,11 +96,16 @@ def create_app(settings: Settings | None = None, llm: LLM | None = None, runner=
             raise _error(404, "NOT_FOUND", "视频不存在")
         return video
 
+    def video_json(conn, video) -> dict:
+        """A video plus how far the background describer has got with its keyframes."""
+        described, total = repo.count_described_keyframes(conn, video.id)
+        return {**asdict(video), "frames_described": described, "frames_total": total}
+
     def start_import(conn, video_id: str) -> dict:
         # A run the user asked for starts a fresh round of automatic retries if it is rate-limited again.
         repo.update_video(conn, video_id, status="importing", auto_retries=0)
         runner.submit(video_id)
-        return asdict(repo.get_video(conn, video_id))
+        return video_json(conn, repo.get_video(conn, video_id))
 
     @app.get("/api/health")
     def health():
@@ -108,7 +113,7 @@ def create_app(settings: Settings | None = None, llm: LLM | None = None, runner=
 
     @app.get("/api/videos")
     def list_videos(conn=Depends(get_conn)):
-        return [asdict(v) for v in repo.list_videos(conn)]
+        return [video_json(conn, v) for v in repo.list_videos(conn)]
 
     @app.post("/api/videos", status_code=202)
     def import_video(req: ImportRequest, conn=Depends(get_conn)):
@@ -122,11 +127,11 @@ def create_app(settings: Settings | None = None, llm: LLM | None = None, runner=
         video = repo.get_video(conn, ref.video_id)
         if created or video.status == "failed":
             return start_import(conn, ref.video_id)
-        return asdict(video)
+        return video_json(conn, video)
 
     @app.get("/api/videos/{video_id}")
     def get_video(video_id: str, conn=Depends(get_conn)):
-        return asdict(require_video(conn, video_id))
+        return video_json(conn, require_video(conn, video_id))
 
     @app.post("/api/videos/{video_id}/retry", status_code=202)
     def retry(video_id: str, conn=Depends(get_conn)):
@@ -165,6 +170,7 @@ def create_app(settings: Settings | None = None, llm: LLM | None = None, runner=
         video = require_video(conn, video_id)
         if not video.ask_ready:
             raise _error(409, "NOT_READY", "字幕还在处理中，请稍后再提问")
+        runner.yield_to_user()  # the answer may look at the screen; give it the vision quota first
 
         def events() -> Iterator[str]:
             # The streaming body outlives the request dependency, so it uses its own connection.

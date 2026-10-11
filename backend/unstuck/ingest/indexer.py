@@ -1,6 +1,7 @@
 import sqlite3
 
 from unstuck.db import repo
+from unstuck.ingest import timeline
 from unstuck.llm.base import LLM
 from unstuck.models import Keyframe, Segment
 
@@ -43,6 +44,15 @@ def publish_index(
         batch = missing[i : i + EMBED_BATCH]
         cache.update(zip(batch, llm.embed(batch), strict=True))
     repo.replace_index(conn, video_id, segments, [cache[t] for t in texts])
+
+
+def refresh_index(conn: sqlite3.Connection, llm: LLM, video_id: str, cache: dict[str, list[float]]) -> None:
+    """Rebuild a video's segments from its stored transcript and keyframes, and swap the index in atomically."""
+    video = repo.get_video(conn, video_id)
+    segments = timeline.build_segments(
+        repo.get_cues(conn, video_id), repo.get_keyframes(conn, video_id), video.duration
+    )
+    publish_index(conn, llm, video_id, segments, cache)
 
 
 def search(conn: sqlite3.Connection, llm: LLM, video_id: str, query: str, k: int) -> list[int]:

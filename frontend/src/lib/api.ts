@@ -46,6 +46,8 @@ export interface Video {
   transcribed_until: number
   auto_retry_at: number // epoch seconds of the next automatic retry after a rate limit; 0 = none
   auto_retries: number
+  frames_described: number // keyframes described by the background job (failed ones count as done)
+  frames_total: number
 }
 
 export interface Playback {

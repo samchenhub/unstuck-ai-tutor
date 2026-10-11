@@ -154,3 +154,50 @@ def test_nothing_is_scheduled_or_submitted_after_shutdown(settings, fake_llm, co
     assert runner.submit(VID) is None
     runner._schedule(VID, 10)
     assert timers.started == []
+
+
+class RecordingVision:
+    def __init__(self):
+        self.enqueued, self.yielded, self.stopped = [], [], False
+
+    def start(self):
+        pass
+
+    def enqueue(self, video_id):
+        self.enqueued.append(video_id)
+
+    def yield_to_user(self, seconds=30.0):
+        self.yielded.append(seconds)
+
+    def stop(self):
+        self.stopped = True
+
+
+def test_frames_left_after_an_import_go_to_the_background_vision_job(settings, fake_llm, conn):
+    from unstuck.models import NewKeyframe
+
+    repo.insert_video(conn, VID, "https://youtu.be/abcdefghijk")
+    repo.replace_keyframes(conn, VID, [NewKeyframe(1.0, "/f/1.jpg", "0" * 16)])
+    vision = RecordingVision()
+    runner = PipelineRunner(settings, lambda: fake_llm, pipeline=RateLimited([False]), vision=vision)
+    runner.submit(VID).result(timeout=5)
+    assert vision.enqueued == [VID]
+    runner.yield_to_user()
+    assert vision.yielded == [30.0]
+    runner.shutdown()
+    assert vision.stopped
+
+
+def test_startup_resumes_background_vision(settings, fake_llm, conn):
+    from unstuck.models import NewKeyframe
+
+    repo.insert_video(conn, VID, "https://youtu.be/abcdefghijk")
+    repo.update_video(conn, VID, status="ready")
+    repo.replace_keyframes(conn, VID, [NewKeyframe(1.0, "/f/1.jpg", "0" * 16)])
+    repo.insert_video(conn, "bbbbbbbbbbb", "u")
+    repo.update_video(conn, "bbbbbbbbbbb", status="ready")
+    vision = RecordingVision()
+    runner = PipelineRunner(settings, lambda: fake_llm, pipeline=RateLimited([]), vision=vision)
+    runner.schedule_pending(conn)
+    assert vision.enqueued == [VID]
+    runner.shutdown()

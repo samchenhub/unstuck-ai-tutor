@@ -125,6 +125,14 @@ def get_keyframes(conn: sqlite3.Connection, video_id: str) -> list[Keyframe]:
     return [_keyframe(r) for r in rows]
 
 
+def count_described_keyframes(conn: sqlite3.Connection, video_id: str) -> tuple[int, int]:
+    """(described, total) keyframes; failed ones count as done so progress can reach the total."""
+    row = conn.execute(
+        "SELECT SUM(status != 'pending'), COUNT(*) FROM keyframes WHERE video_id = ?", (video_id,)
+    ).fetchone()
+    return int(row[0] or 0), int(row[1] or 0)
+
+
 def save_frame_description(conn: sqlite3.Connection, keyframe_id: int, desc: FrameDescription | None) -> None:
     with conn:
         if desc is None:

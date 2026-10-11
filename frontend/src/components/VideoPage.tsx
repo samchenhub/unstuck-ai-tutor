@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { api, type Chapter, type Video } from '../lib/api'
+import { visionInBackground } from '../lib/progress'
 import { formatTime } from '../lib/timestamps'
 import { ChatPanel } from './ChatPanel'
 import { ImportProgress } from './ImportView'
@@ -45,15 +46,15 @@ export function VideoPage({ videoId }: { videoId: string }) {
         setVideo(next)
         setError(null)
         if (next.status === 'importing') timer = window.setTimeout(load, POLL_MS)
-        // A rate-limited import is retried by the backend later; keep watching, but slowly.
-        else if (next.auto_retry_at > 0) timer = window.setTimeout(load, RETRY_POLL_MS)
+        // A rate-limited import is retried later, and frames are described in the background: keep watching, slowly.
+        else if (next.auto_retry_at > 0 || visionInBackground(next)) timer = window.setTimeout(load, RETRY_POLL_MS)
       } catch (err) {
         if (cancelled) return
         setError(err instanceof Error ? err.message : String(err))
         // A transient failure must not end polling while the import is running, a retry is planned,
         // or nothing has loaded yet.
         if (last === null || last.status === 'importing') timer = window.setTimeout(load, POLL_MS)
-        else if (last.auto_retry_at > 0) timer = window.setTimeout(load, RETRY_POLL_MS)
+        else if (last.auto_retry_at > 0 || visionInBackground(last)) timer = window.setTimeout(load, RETRY_POLL_MS)
       }
     }
     void load()
@@ -88,7 +89,9 @@ export function VideoPage({ videoId }: { videoId: string }) {
               </p>
             )}
             {video.channel && <p className="muted">{video.channel}</p>}
-            {(video.status !== 'ready' || hasFailure) && <ImportProgress video={video} onRetry={retry} />}
+            {(video.status !== 'ready' || hasFailure || visionInBackground(video)) && (
+              <ImportProgress video={video} onRetry={retry} />
+            )}
             {video.outline && video.outline.length > 0 && (
               <Outline chapters={video.outline} onSeek={(seconds) => playerRef.current?.seekTo(seconds)} />
             )}

@@ -4,7 +4,7 @@ import pytest
 
 from unstuck.db import repo
 from unstuck.errors import IngestError
-from unstuck.ingest import stages, vision, youtube
+from unstuck.ingest import stages, youtube
 from unstuck.ingest.pipeline import SKIPPED, StageContext
 from unstuck.llm import FakeLLM
 from unstuck.models import Cue, NewKeyframe, Segment
@@ -89,7 +89,6 @@ def test_download_failure_degrades_to_transcript_only(ctx, monkeypatch):
     stages.stage_download(ctx)
     assert repo.get_video(ctx.conn, VID).visual_mode == "transcript_only"
     assert stages.stage_keyframes(ctx) == SKIPPED
-    assert stages.stage_vision(ctx) == SKIPPED
 
 
 def test_keyframes_stage_stores_frames(ctx, monkeypatch):
@@ -98,19 +97,6 @@ def test_keyframes_stage_stores_frames(ctx, monkeypatch):
     monkeypatch.setattr(stages.keyframes, "extract_keyframes", lambda path, duration, out_dir, **kw: frames)
     stages.stage_keyframes(ctx)
     assert [f.t for f in repo.get_keyframes(ctx.conn, VID)] == [1.0]
-
-
-def test_vision_partial_failure_raises_after_saving_the_rest(ctx, monkeypatch):
-    monkeypatch.setattr(vision.time, "sleep", lambda s: None)
-    repo.replace_keyframes(ctx.conn, VID, [NewKeyframe(1.0, "/f/1.jpg", "a"), NewKeyframe(20.0, "/f/2.jpg", "b")])
-    ctx.llm = FakeLLM(vision_responses=[
-        RuntimeError("429"), RuntimeError("429"),
-        '{"kind": "slide", "summary": "ok", "ocr_text": "", "change_note": ""}',
-    ])
-    with pytest.raises(IngestError) as err:
-        stages.stage_vision(ctx)
-    assert err.value.code == "VISION_PARTIAL"
-    assert [f.status for f in repo.get_keyframes(ctx.conn, VID)] == ["failed", "ok"]
 
 
 def test_timeline_and_index_use_keyframes(ctx):
