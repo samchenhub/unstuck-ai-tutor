@@ -4,7 +4,7 @@ from collections.abc import Iterator
 
 from unstuck.config import Settings
 from unstuck.db import repo
-from unstuck.ingest import indexer
+from unstuck.ingest import indexer, vision
 from unstuck.llm.base import LLM, ModelBusyError
 from unstuck.models import Chat, Keyframe, Segment, Video
 from unstuck.timefmt import fmt_ts
@@ -60,6 +60,31 @@ def _transcript_until(video: Video) -> float | None:
     return video.transcribed_until
 
 
+RECENT_FRAME_S = 90.0
+
+
+def _describe_recent_frame(
+    conn: sqlite3.Connection, llm: LLM, video_id: str, keyframes: list[Keyframe], t: float
+) -> list[Keyframe]:
+    """If nothing on screen in the last 90 s is described yet, describe the sampled frame nearest the pause now
+    (one vision call at most; the background job may not have got there). Returns the up-to-date keyframes."""
+    recent = [k for k in keyframes if t - RECENT_FRAME_S <= k.t <= t]
+    pending = [k for k in recent if k.status == "pending"]
+    if not pending or any(k.status == "ok" for k in recent):
+        return keyframes
+    target = pending[-1]
+    previous = [k for k in keyframes if k.status == "ok" and k.t < target.t][-1:]
+    try:
+        vision.describe_pending(
+            llm, [*previous, target], lambda frame_id, desc: repo.save_frame_description(conn, frame_id, desc),
+            attempts=1,
+        )
+    except ModelBusyError:
+        log.info("on-demand frame for %s at %.0fs skipped: vision is rate-limited", video_id, target.t)
+        return keyframes
+    return repo.get_keyframes(conn, video_id)
+
+
 def _current_transcript(window: list[Segment], t: float) -> str:
     current = next((s for s in window if s.start <= t < s.end), window[-1] if window else None)
     return current.transcript if current else ""
@@ -109,7 +134,7 @@ def prepare_messages(
 
     segments = repo.get_segments(conn, video_id)
     visual = use_visual and video.visual_mode == "full"
-    keyframes = repo.get_keyframes(conn, video_id) if visual else []
+    keyframes = _describe_recent_frame(conn, llm, video_id, repo.get_keyframes(conn, video_id), t) if visual else []
     window = context.window_segments(segments, t)
     frame = _current_frame(conn, llm, settings, video_id, keyframes, t, question) if visual else None
 

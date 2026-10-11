@@ -125,6 +125,18 @@ def get_keyframes(conn: sqlite3.Connection, video_id: str) -> list[Keyframe]:
     return [_keyframe(r) for r in rows]
 
 
+def add_described_keyframe(
+    conn: sqlite3.Connection, video_id: str, frame: NewKeyframe, desc: FrameDescription
+) -> None:
+    with conn:
+        conn.execute(
+            "INSERT INTO keyframes (video_id, t, image_path, phash, kind, summary, ocr_text, change_note, status) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'ok')",
+            (video_id, frame.t, frame.image_path, frame.phash, desc.kind, desc.summary, desc.ocr_text,
+             desc.change_note),
+        )
+
+
 def count_described_keyframes(conn: sqlite3.Connection, video_id: str) -> tuple[int, int]:
     """(described, total) keyframes; failed ones count as done so progress can reach the total."""
     row = conn.execute(

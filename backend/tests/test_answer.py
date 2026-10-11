@@ -247,3 +247,46 @@ def test_transcription_in_progress_is_passed_to_the_context(conn, fake_llm, sett
     assert "still being transcribed" not in user_content(prepare_messages(conn, fake_llm, settings, seeded_video, "Q", 110.0))
     repo.update_video(conn, seeded_video, stage_states={**states, "transcript": "done"})
     assert "still being transcribed" not in user_content(prepare_messages(conn, fake_llm, settings, seeded_video, "Q", 110.0))
+
+
+SLIDE = '{"kind": "slide", "summary": "Gradient descent update rule", "ocr_text": "w := w - a dw", "change_note": ""}'
+
+
+def _add_pending_frame(conn, video_id, t):
+    from unstuck.models import NewKeyframe
+
+    keyframes = repo.get_keyframes(conn, video_id)
+    frames = [NewKeyframe(k.t, k.image_path, k.phash) for k in keyframes] + [NewKeyframe(t, f"/f/{t}.jpg", "a" * 16)]
+    kept = {k.t: k for k in keyframes}
+    for frame in repo.replace_keyframes(conn, video_id, frames):
+        old = kept.get(frame.t)
+        if old is not None and old.status == "ok":
+            from unstuck.models import FrameDescription
+
+            repo.save_frame_description(conn, frame.id, FrameDescription(old.kind, old.summary, old.ocr_text, old.change_note))
+
+
+def test_a_pending_frame_just_before_the_pause_is_described_on_demand(conn, settings, seeded_video, monkeypatch):
+    monkeypatch.setattr(answer, "live_frame_description", lambda *a, **kw: None)
+    _add_pending_frame(conn, seeded_video, 260.0)
+    llm = FakeLLM(vision_responses=[SLIDE])
+    # The described frame at 200 s is more than 90 s before the pause, so the pending one at 260 s is described.
+    content = user_content(prepare_messages(conn, llm, settings, seeded_video, "What is this rule?", 295.0))
+    assert "Gradient descent update rule" in content
+    assert [k.status for k in repo.get_keyframes(conn, seeded_video) if k.t == 260.0] == ["ok"]
+
+
+def test_no_extra_vision_call_when_the_recent_screen_is_already_known(conn, settings, seeded_video, monkeypatch):
+    monkeypatch.setattr(answer, "live_frame_description", lambda *a, **kw: None)
+    _add_pending_frame(conn, seeded_video, 105.0)  # frame 100 (described) is in the same stretch
+    llm = FakeLLM(vision_responses=[AssertionError("no vision call expected")])
+    prepare_messages(conn, llm, settings, seeded_video, "Q", 110.0)
+    assert [k.status for k in repo.get_keyframes(conn, seeded_video) if k.t == 105.0] == ["pending"]
+
+
+def test_a_rate_limited_on_demand_frame_does_not_block_the_answer(conn, settings, seeded_video, monkeypatch):
+    monkeypatch.setattr(answer, "live_frame_description", lambda *a, **kw: None)
+    _add_pending_frame(conn, seeded_video, 260.0)
+    llm = FakeLLM(vision_responses=[ModelBusyError("429")])
+    assert prepare_messages(conn, llm, settings, seeded_video, "Q", 295.0)
+    assert [k.status for k in repo.get_keyframes(conn, seeded_video) if k.t == 260.0] == ["pending"]

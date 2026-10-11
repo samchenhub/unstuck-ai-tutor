@@ -2,11 +2,15 @@ import logging
 import sqlite3
 from pathlib import Path
 
+import imagehash
+from PIL import Image
+
 from unstuck import media, sources
 from unstuck.config import Settings
 from unstuck.db import repo
 from unstuck.ingest import files
 from unstuck.llm.base import LLM
+from unstuck.models import FrameDescription, NewKeyframe
 
 log = logging.getLogger(__name__)
 
@@ -37,7 +41,21 @@ def live_frame_description(
     if not description:
         return None
     repo.put_frame_cache(conn, video_id, second, description)
+    _keep_as_keyframe(conn, video_id, second, image, description)
     return description
+
+
+def _keep_as_keyframe(conn: sqlite3.Connection, video_id: str, second: int, image: Path, description: str) -> None:
+    """Later questions near this moment, and retrieval, reuse what was seen instead of calling vision again."""
+    try:
+        with Image.open(image) as img:
+            phash = str(imagehash.phash(img))
+        repo.add_described_keyframe(
+            conn, video_id, NewKeyframe(float(second), str(image), phash),
+            FrameDescription(kind="other", summary=description, ocr_text="", change_note=""),
+        )
+    except Exception:
+        log.warning("could not keep the live frame of %s at %ss", video_id, second, exc_info=True)
 
 
 def _frame_input(

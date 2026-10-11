@@ -109,3 +109,10 @@ def test_local_file_capture_sends_no_headers(conn, settings, sample_video, monke
     calls = _record_extract(monkeypatch)
     live_frame_description(conn, FakeLLM(vision_responses=["x"]), settings, VID, 1.0, "q")
     assert len(calls) == 1 and calls[0][1] == {"headers": None}
+
+
+def test_a_described_live_frame_is_kept_as_a_keyframe(conn, settings, sample_video):
+    install_video(settings, sample_video)
+    live_frame_description(conn, FakeLLM(vision_responses=["白板上写着链式法则"]), settings, VID, 1.4, "q")
+    frames = repo.get_keyframes(conn, VID)
+    assert [(f.t, f.status, f.summary) for f in frames] == [(1.0, "ok", "白板上写着链式法则")]
