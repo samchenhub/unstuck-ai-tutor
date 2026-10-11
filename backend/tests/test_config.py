@@ -1,4 +1,4 @@
-from unstuck.config import load_settings
+from unstuck.config import load_settings, default_cookies_browser
 
 ENV_KEYS = (
     "LLM_BASE_URL", "LLM_API_KEY", "CHAT_MODEL", "VISION_MODEL", "EMBED_MODEL",
@@ -41,6 +41,8 @@ def test_env_overrides(monkeypatch, tmp_path):
 def test_bilibili_cookie_browser_setting(monkeypatch, tmp_path):
     monkeypatch.setenv("UNSTUCK_DATA_DIR", str(tmp_path))
     monkeypatch.delenv("BILIBILI_COOKIES_BROWSER", raising=False)
-    assert load_settings(env_file=False).bilibili_cookies_browser == "chrome"
+    assert load_settings(env_file=False).bilibili_cookies_browser == default_cookies_browser()
+    assert default_cookies_browser("posix") == "chrome"
+    assert default_cookies_browser("nt") == ""  # Chrome's cookies are unreadable on Windows: QR login instead
     monkeypatch.setenv("BILIBILI_COOKIES_BROWSER", "")
     assert load_settings(env_file=False).bilibili_cookies_browser == ""

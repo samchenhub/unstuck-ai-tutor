@@ -40,6 +40,11 @@ def _flag(value: str) -> bool:
     return value.strip().lower() not in ("0", "false", "no", "")
 
 
+def default_cookies_browser(os_name: str = os.name) -> str:
+    """Chrome's cookies are unreadable to other programs on Windows (app-bound encryption): use the QR login."""
+    return "" if os_name == "nt" else "chrome"
+
+
 def load_settings(env_file: bool = True) -> Settings:
     if env_file:
         load_dotenv()
@@ -55,8 +60,7 @@ def load_settings(env_file: bool = True) -> Settings:
         max_duration_s=int(os.getenv("MAX_DURATION_S", "7200")),
         llm_disable_thinking=_flag(os.getenv("LLM_DISABLE_THINKING", "1")),
         llm_max_concurrency=int(os.getenv("LLM_MAX_CONCURRENCY", "2")),
-        # Chrome's cookies are unreadable to other programs on Windows (app-bound encryption): use the QR login.
-        bilibili_cookies_browser=os.getenv("BILIBILI_COOKIES_BROWSER", "" if os.name == "nt" else "chrome").strip(),
+        bilibili_cookies_browser=os.getenv("BILIBILI_COOKIES_BROWSER", default_cookies_browser()).strip(),
         groq_api_key=os.getenv("GROQ_API_KEY", "").strip(),
         groq_base_url=os.getenv("GROQ_BASE_URL", "https://api.groq.com/openai/v1"),
         groq_whisper_model=os.getenv("GROQ_WHISPER_MODEL", "whisper-large-v3-turbo"),
