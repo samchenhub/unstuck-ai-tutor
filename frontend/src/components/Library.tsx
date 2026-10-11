@@ -32,7 +32,7 @@ export function Library({ onOpen }: { onOpen: (id: string) => void }) {
   const [error, setError] = useState<string | null>(null)
   const [bili, setBili] = useState<BilibiliStatus | null>(null)
   const loadBili = () => {
-    loadBili()
+    api.bilibiliStatus().then(setBili).catch(() => setBili(null))
   }
 
   useEffect(() => {
@@ -40,7 +40,7 @@ export function Library({ onOpen }: { onOpen: (id: string) => void }) {
       .listVideos()
       .then(setVideos)
       .catch((err: unknown) => setError(err instanceof Error ? err.message : String(err)))
-    api.bilibiliStatus().then(setBili).catch(() => setBili(null))
+    loadBili()
   }, [])
 
   return (

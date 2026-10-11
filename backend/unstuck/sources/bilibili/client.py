@@ -94,9 +94,10 @@ class BiliClient:
 
     def reset_login(self) -> None:
         """The saved login changed (QR login or logout): reload cookies and check the login again."""
-        self._login = None
-        self.cookies_unavailable = False
-        self._drop_cookie_jar()
+        with self._lock:
+            self._login = None
+            self.cookies_unavailable = False
+            self._ydl = None
 
     def _drop_cookie_jar(self) -> None:
         with self._lock:

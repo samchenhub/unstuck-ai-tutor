@@ -173,20 +173,35 @@ def create_app(settings: Settings | None = None, llm: LLM | None = None, runner=
     def bilibili_status():
         return sources.bilibili_status(settings)
 
+    # Only QR codes this app issued may be polled: polling an attacker's own key from another site would log
+    # this app into their account. Logging out cancels logins in progress.
+    issued_logins: set[str] = set()
+    logins_lock = threading.Lock()
+
     @app.post("/api/bilibili/login")
     def bilibili_login_start():
         started = source_call(lambda: bili_login.start())
+        with logins_lock:
+            issued_logins.add(started.key)
         return {"key": started.key, "qr": started.qr}
 
     @app.get("/api/bilibili/login/{key}")
     def bilibili_login_poll(key: str):
+        with logins_lock:
+            if key not in issued_logins:
+                raise _error(404, "NOT_FOUND", "这个登录二维码不存在或已失效")
         state = source_call(lambda: bili_login.poll(key, settings.bilibili_cookie_file))
+        if state in ("done", "expired", "failed"):
+            with logins_lock:
+                issued_logins.discard(key)
         if state == "done":
             bilibili_client_for(settings).reset_login()
         return {"state": state}
 
     @app.delete("/api/bilibili/login", status_code=204)
     def bilibili_logout():
+        with logins_lock:
+            issued_logins.clear()
         bili_login.logout(settings.bilibili_cookie_file)
         bilibili_client_for(settings).reset_login()
 

@@ -305,3 +305,18 @@ def test_qr_login_errors_are_502(client, monkeypatch):
     monkeypatch.setattr(login, "start", fail)
     r = client.post("/api/bilibili/login")
     assert r.status_code == 502 and r.json()["detail"]["code"] == "BILIBILI_ERROR"
+
+
+def test_qr_login_only_polls_codes_this_app_issued(client, settings, monkeypatch):
+    """A page elsewhere must not log this app into someone else's account with a key it made itself."""
+    from unstuck.sources.bilibili import login
+
+    monkeypatch.setattr(login, "start", lambda: login.QrStart(key="mine", qr="data:x"))
+    polled = []
+    monkeypatch.setattr(login, "poll", lambda key, cookie_file: polled.append(key) or "waiting")
+    assert client.get("/api/bilibili/login/theirs").status_code == 404
+    client.post("/api/bilibili/login")
+    assert client.get("/api/bilibili/login/mine").json() == {"state": "waiting"}
+    client.delete("/api/bilibili/login")  # logging out also cancels a login in progress
+    assert client.get("/api/bilibili/login/mine").status_code == 404
+    assert polled == ["mine"]

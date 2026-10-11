@@ -8,38 +8,55 @@ const POLL_MS = 2000
 export function BiliLogin({ status, onChange }: { status: BilibiliStatus | null; onChange: () => void }) {
   const [qr, setQr] = useState<{ key: string; image: string } | null>(null)
   const [state, setState] = useState<QrLoginState>('waiting')
+  const [starting, setStarting] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const timer = useRef<number | undefined>(undefined)
+  const active = useRef<string | null>(null) // the QR key being polled; results for any other key are stale
 
-  useEffect(() => () => window.clearTimeout(timer.current), [])
+  useEffect(
+    () => () => {
+      active.current = null
+      window.clearTimeout(timer.current)
+    },
+    [],
+  )
 
   const poll = (key: string) => {
     timer.current = window.setTimeout(async () => {
       try {
         const { state: next } = await api.bilibiliLoginPoll(key)
+        if (active.current !== key) return
         setState(next)
         if (next === 'done') {
+          active.current = null
           setQr(null)
           onChange()
         } else if (next === 'waiting' || next === 'scanned') {
           poll(key)
         }
       } catch (err) {
+        if (active.current !== key) return
         setError(err instanceof Error ? err.message : String(err))
       }
     }, POLL_MS)
   }
 
   const start = async () => {
+    if (starting) return
     window.clearTimeout(timer.current)
+    active.current = null
+    setStarting(true)
     setError(null)
     setState('waiting')
     try {
       const started = await api.bilibiliLoginStart()
+      active.current = started.key
       setQr({ key: started.key, image: started.qr })
       poll(started.key)
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err))
+    } finally {
+      setStarting(false)
     }
   }
 
@@ -68,8 +85,8 @@ export function BiliLogin({ status, onChange }: { status: BilibiliStatus | null;
       <div className="bili-login-row">
         <span>{warning}</span>
         {!qr && (
-          <button type="button" className="btn btn-small" onClick={start}>
-            扫码登录
+          <button type="button" className="btn btn-small" onClick={start} disabled={starting}>
+            {starting ? '获取中…' : '扫码登录'}
           </button>
         )}
       </div>
@@ -77,9 +94,9 @@ export function BiliLogin({ status, onChange }: { status: BilibiliStatus | null;
         <div className="bili-login-qr">
           <img src={qr.image} alt="B站登录二维码" width={180} height={180} />
           <div>
-            <p>{qrLoginText(state)}</p>
-            {(state === 'expired' || state === 'failed') && (
-              <button type="button" className="btn btn-small" onClick={start}>
+            <p aria-live="polite">{qrLoginText(state)}</p>
+            {(state === 'expired' || state === 'failed' || error) && (
+              <button type="button" className="btn btn-small" onClick={start} disabled={starting}>
                 重新获取二维码
               </button>
             )}

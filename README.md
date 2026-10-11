@@ -69,7 +69,7 @@ winget install -e --id OpenJS.NodeJS.LTS
 winget install -e --id Gyan.FFmpeg
 ```
 
-then double-click `Unstuck.bat` (it runs `start.ps1`).
+then double-click `Unstuck.bat` (it runs `start.ps1`). On a managed PC (school/office) where Group Policy forbids PowerShell scripts, run the two servers by hand as shown below.
 
 The launcher installs missing dependencies, starts the backend (:8000) and frontend (:5173), and opens http://localhost:5173. Press Ctrl+C or close the window to stop both. On the first run it creates `backend/.env` from `.env.example`; put your key in `LLM_API_KEY` (Notepad is fine) and run it again.
 

@@ -3,7 +3,7 @@
 # Press Ctrl+C or close the window to stop both.
 $ErrorActionPreference = 'Stop'
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
-Set-Location $PSScriptRoot
+Set-Location -LiteralPath $PSScriptRoot  # -LiteralPath: [ ] in a folder name are not wildcards
 $env:PYTHONUTF8 = '1'  # Chinese text in logs and files, whatever the Windows code page
 
 function Need($command, $wingetId) {
@@ -14,6 +14,7 @@ function Need($command, $wingetId) {
 }
 Need uv 'astral-sh.uv'
 Need node 'OpenJS.NodeJS.LTS'
+Need npm 'OpenJS.NodeJS.LTS'
 Need ffmpeg 'Gyan.FFmpeg'
 
 if (-not (Test-Path 'backend\.env')) {

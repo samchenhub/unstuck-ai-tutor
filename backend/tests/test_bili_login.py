@@ -82,3 +82,19 @@ def test_the_client_prefers_the_saved_login_over_the_browser(tmp_path):
 def test_unknown_poll_codes_are_errors():
     with pytest.raises(Exception):
         login.poll("k1", None, fetch=lambda url: {"code": -400, "message": "bad request"})
+
+
+def test_network_problems_become_bilibili_errors(monkeypatch):
+    import urllib.error
+
+    from unstuck.errors import IngestError
+
+    def down(request, timeout):
+        raise urllib.error.URLError("no route to host")
+
+    monkeypatch.setattr(login.urllib.request, "urlopen", down)
+    with pytest.raises(IngestError) as err:
+        login.start()
+    assert err.value.code == "BILIBILI_ERROR"
+    with pytest.raises(IngestError):
+        login.start(fetch=lambda url: {"code": 0, "data": {}})  # no url / key in the reply
