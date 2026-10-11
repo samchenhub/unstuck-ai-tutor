@@ -49,6 +49,8 @@ export const BiliPlayer = forwardRef<PlayerHandle, { videoId: string }>(function
     if (video && resumeAt.current !== null) {
       video.currentTime = resumeAt.current
       resumeAt.current = null
+      // The refreshed stream loaded, so the budget is for the next outage; a paused video never fires `playing`.
+      refreshes.current = 0
       if (wasPlaying.current) void video.play().catch(() => {})
     }
   }

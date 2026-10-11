@@ -468,6 +468,8 @@ button:disabled {
 .thumb {
   position: relative;
   display: block;
+  aspect-ratio: 16 / 9;
+  background: var(--surface-2);
 }
 
 .thumb img {

@@ -63,7 +63,7 @@ If the free-tier model stays rate-limited after the retries, the stage ends with
 
 Paste a `bilibili.com/video/BV…` link (or a `b23.tv` share link). Multi-part courses import one part at a time; the video page lists the other parts with an import button.
 
-Unstuck reads your Bilibili login from Chrome (`BILIBILI_COOKIES_BROWSER` in `backend/.env`; macOS asks once for Keychain access to "Chrome Safe Storage"). Logged in, it uses Bilibili's subtitles (uploader-made or AI-generated) and requests 720p playback; logged out it still works, but transcribes with Whisper and plays at lower quality. Bilibili videos play straight from Bilibili's CDN in the browser's own player, so watching starts immediately.
+Unstuck reads your Bilibili login from your browser: `BILIBILI_COOKIES_BROWSER` in `backend/.env` accepts `chrome` (the default), `safari`, `edge`, `firefox`, or empty to disable login (on macOS, Chrome asks once for Keychain access to "Chrome Safe Storage"). Logged in, it uses Bilibili's subtitles (uploader-made or AI-generated) and requests 720p playback; logged out it still works, but transcribes with Whisper and plays at lower quality. Bilibili videos play straight from Bilibili's CDN in the browser's own player, so watching starts immediately.
 
 This relies on Bilibili's unofficial web APIs; it is for personal use and demos.
 
