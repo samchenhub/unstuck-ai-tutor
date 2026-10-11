@@ -7,7 +7,7 @@ function video(over: Partial<Video>): Video {
     id: 'BV1Ex4y1G7nG_p1', url: '', title: 'T', channel: 'C', duration: 6298, status: 'importing', ask_ready: false,
     stage_states: {}, visual_mode: 'full', outline: null, error_code: null, error_message: null, created_at: '',
     source: 'bilibili', course_id: 'BV1Ex4y1G7nG', part: 1, part_title: '', parts_total: 1, thumbnail: '',
-    transcribed_until: 0, ...over,
+    transcribed_until: 0, auto_retry_at: 0, auto_retries: 0, ...over,
   }
 }
 
@@ -32,5 +32,25 @@ describe('importHeadline', () => {
     expect(importHeadline(video({}))).toBe('正在导入…')
     expect(importHeadline(video({ status: 'failed' }))).toBe('导入失败')
     expect(importHeadline(video({ status: 'ready' }))).toBe('导入完成，但有部分步骤失败')
+  })
+})
+
+describe('automatic retry after a rate limit', () => {
+  const limited = video({
+    status: 'ready', ask_ready: true, error_code: 'MODEL_BUSY', auto_retry_at: 1_000_000 + 290,
+    stage_states: { transcript: 'done', vision: 'failed', outline: 'failed', timeline: 'done' },
+  })
+
+  it('labels failed stages as waiting for the retry', () => {
+    expect(stageStateLabel(limited, 'vision')).toBe('等待重试')
+    expect(stageStateLabel(limited, 'timeline')).toBe('完成')
+    expect(stageStateLabel({ ...limited, auto_retry_at: 0 }, 'vision')).toBe('失败')
+  })
+
+  it('says when the next attempt happens', () => {
+    expect(importHeadline(limited, 1_000_000 * 1000)).toBe('免费模型暂时限流，约 5 分钟后自动重试画面理解、大纲；现在已经可以提问')
+    expect(importHeadline({ ...limited, auto_retry_at: 1_000_000 - 5 }, 1_000_000 * 1000)).toBe(
+      '免费模型暂时限流，马上自动重试画面理解、大纲；现在已经可以提问',
+    )
   })
 })

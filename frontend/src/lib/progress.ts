@@ -1,4 +1,4 @@
-import type { Stage, StageState, Video } from './api'
+import { STAGE_LABELS, STAGES, type Stage, type StageState, type Video } from './api'
 import { formatTime } from './timestamps'
 
 const STATE_LABELS: Record<StageState, string> = {
@@ -15,11 +15,20 @@ function transcribing(video: Video): boolean {
 
 export function stageStateLabel(video: Video, stage: Stage): string {
   const state = video.stage_states[stage] ?? 'pending'
+  if (state === 'failed' && video.auto_retry_at > 0) return '等待重试'
   if (stage === 'transcript' && transcribing(video)) return `已转写 ${formatTime(video.transcribed_until)}`
   return STATE_LABELS[state]
 }
 
-export function importHeadline(video: Video): string {
+function retryHeadline(video: Video, nowMs: number): string {
+  const failed = STAGES.filter((stage) => video.stage_states[stage] === 'failed').map((stage) => STAGE_LABELS[stage])
+  const minutes = Math.ceil((video.auto_retry_at * 1000 - nowMs) / 60_000)
+  const when = minutes > 0 ? `约 ${minutes} 分钟后` : '马上'
+  return `免费模型暂时限流，${when}自动重试${failed.join('、')}；现在已经可以提问`
+}
+
+export function importHeadline(video: Video, nowMs: number = Date.now()): string {
+  if (video.status === 'ready' && video.auto_retry_at > 0) return retryHeadline(video, nowMs)
   if (video.status === 'failed') return '导入失败'
   if (video.status === 'ready') return '导入完成，但有部分步骤失败'
   if (!video.ask_ready) return '正在导入…'

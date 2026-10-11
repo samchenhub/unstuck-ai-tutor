@@ -18,6 +18,9 @@ class FakeRunner:
     def submit(self, video_id):
         self.submitted.append(video_id)
 
+    def schedule_pending(self, conn):
+        self.scheduled = True
+
     def shutdown(self):
         pass
 
@@ -126,6 +129,7 @@ def test_startup_resumes_importing_videos(settings, fake_llm, conn):
     with TestClient(create_app(settings=settings, llm=fake_llm, runner=runner)):
         pass
     assert runner.submitted == ["aaaaaaaaaaa"]
+    assert runner.scheduled  # automatic retries planned before the restart are planned again
 
 
 def test_get_llm_builds_the_real_llm_exactly_once_across_threads(settings, runner, monkeypatch):

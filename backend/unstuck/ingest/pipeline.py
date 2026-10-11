@@ -38,7 +38,7 @@ def _describe(stage: str, exc: Exception) -> tuple[str, str]:
     if isinstance(exc, IngestError):
         return exc.code, exc.message
     if isinstance(exc, ModelBusyError):
-        return "MODEL_BUSY", f"{stage} 阶段：模型当前访问量过大（免费额度限流），请稍后点击重试"
+        return "MODEL_BUSY", f"{stage} 阶段：模型当前访问量过大（免费额度限流），稍后会自动重试，也可以点击重试"
     return "STAGE_FAILED", f"{stage} 阶段失败：{exc}"[:500]
 
 
@@ -53,7 +53,8 @@ class Pipeline:
             raise ValueError(f"missing stage functions: {sorted(missing)}")
         self._stages = dict(stages)
 
-    def run(self, ctx: StageContext) -> None:
+    def run(self, ctx: StageContext) -> bool:
+        """Run the unfinished stages; returns True if a stage failed because the model was rate-limited."""
         video = repo.get_video(ctx.conn, ctx.video_id)
         if video is None:
             raise ValueError(f"unknown video {ctx.video_id}")
@@ -61,7 +62,7 @@ class Pipeline:
         start = next((i for i, name in enumerate(STAGES) if states[name] not in _FINISHED), None)
         if start is None:
             repo.update_video(ctx.conn, ctx.video_id, status="ready")
-            return
+            return False
 
         for name in STAGES[start:]:
             states[name] = "pending"
@@ -70,6 +71,7 @@ class Pipeline:
         )
 
         last_error: tuple[str, str] | None = None
+        rate_limited = False
         for name in STAGES[start:]:
             states[name] = "running"
             repo.update_video(ctx.conn, ctx.video_id, stage_states=states)
@@ -80,12 +82,13 @@ class Pipeline:
                 log.exception("stage %s failed for %s", name, ctx.video_id)
                 states[name] = "failed"
                 code, message = _describe(name, exc)
+                rate_limited = rate_limited or isinstance(exc, ModelBusyError)
                 if name in CRITICAL:
                     repo.update_video(
                         ctx.conn, ctx.video_id, status="failed", stage_states=states,
                         error_code=code, error_message=message,
                     )
-                    return
+                    return rate_limited
                 last_error = (code, message)
             repo.update_video(ctx.conn, ctx.video_id, stage_states=states)
 
@@ -93,3 +96,4 @@ class Pipeline:
         repo.update_video(
             ctx.conn, ctx.video_id, status="ready", stage_states=states, error_code=code, error_message=message
         )
+        return rate_limited

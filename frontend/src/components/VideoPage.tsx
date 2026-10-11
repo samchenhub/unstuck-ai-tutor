@@ -7,6 +7,7 @@ import { PartsList } from './PartsList'
 import { Player, type PlayerHandle } from './Player'
 
 const POLL_MS = 2000
+const RETRY_POLL_MS = 15000
 
 function Outline({ chapters, onSeek }: { chapters: Chapter[]; onSeek: (seconds: number) => void }) {
   return (
@@ -44,6 +45,8 @@ export function VideoPage({ videoId }: { videoId: string }) {
         setVideo(next)
         setError(null)
         if (next.status === 'importing') timer = window.setTimeout(load, POLL_MS)
+        // A rate-limited import is retried by the backend later; keep watching, but slowly.
+        else if (next.auto_retry_at > 0) timer = window.setTimeout(load, RETRY_POLL_MS)
       } catch (err) {
         if (cancelled) return
         setError(err instanceof Error ? err.message : String(err))

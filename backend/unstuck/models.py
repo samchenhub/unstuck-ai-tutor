@@ -85,3 +85,5 @@ class Video:
     parts_total: int = 1
     thumbnail: str = ""
     transcribed_until: float = 0.0  # seconds covered by local speech-to-text so far (0 for caption transcripts)
+    auto_retry_at: float = 0.0  # epoch seconds of the next automatic retry after a rate limit (0 = none)
+    auto_retries: int = 0

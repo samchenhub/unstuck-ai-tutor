@@ -73,6 +73,7 @@ def create_app(settings: Settings | None = None, llm: LLM | None = None, runner=
             for video in repo.list_videos(conn):
                 if video.status == "importing":
                     runner.submit(video.id)
+            runner.schedule_pending(conn)
         finally:
             conn.close()
         threading.Thread(target=warm_up_embeddings, name="embed-warmup", daemon=True).start()

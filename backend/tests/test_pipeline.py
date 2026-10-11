@@ -127,3 +127,11 @@ def test_retry_clears_previous_error(ctx):
 def test_stage_context_creates_video_dir(ctx, settings):
     assert ctx.video_dir == settings.video_dir(VID)
     assert ctx.video_dir.is_dir()
+
+
+def test_run_reports_whether_a_stage_was_rate_limited(ctx):
+    assert Pipeline(recording([], {"vision": raise_(ModelBusyError("x"))})).run(ctx) is True
+    repo.update_video(ctx.conn, VID, stage_states={})
+    assert Pipeline(recording([], {"outline": raise_(IngestError("OUTLINE_FAILED", "x"))})).run(ctx) is False
+    repo.update_video(ctx.conn, VID, stage_states={})
+    assert Pipeline(recording([])).run(ctx) is False

@@ -44,6 +44,8 @@ export interface Video {
   parts_total: number
   thumbnail: string
   transcribed_until: number
+  auto_retry_at: number // epoch seconds of the next automatic retry after a rate limit; 0 = none
+  auto_retries: number
 }
 
 export interface Playback {
