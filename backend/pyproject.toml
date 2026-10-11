@@ -15,6 +15,7 @@ dependencies = [
   "Pillow>=10.0",
   "sentence-transformers>=3.0",
   "json-repair>=0.30",
+  "segno>=1.6",
 ]
 
 [dependency-groups]

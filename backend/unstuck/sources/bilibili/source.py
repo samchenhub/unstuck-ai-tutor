@@ -33,12 +33,12 @@ def _settle(dest: Path, feed: AudioFeed, *, path: Path | None = None, error: Bas
 
 
 @functools.lru_cache(maxsize=4)
-def _client(cookies_browser: str) -> BiliClient:
-    return BiliClient(cookies_browser)
+def _client(cookies_browser: str, cookie_file: str) -> BiliClient:
+    return BiliClient(cookies_browser, cookie_file=Path(cookie_file))
 
 
 def client_for(settings: Settings) -> BiliClient:
-    return _client(settings.bilibili_cookies_browser)
+    return _client(settings.bilibili_cookies_browser, str(settings.bilibili_cookie_file))
 
 
 class BilibiliSource:

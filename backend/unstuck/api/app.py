@@ -13,6 +13,8 @@ from pydantic import BaseModel, Field, StringConstraints
 
 from unstuck import sources
 from unstuck.api.runner import PipelineRunner
+from unstuck.sources.bilibili import login as bili_login
+from unstuck.sources.bilibili.source import client_for as bilibili_client_for
 from unstuck.config import Settings, load_settings
 from unstuck.db import connect, repo
 from unstuck.errors import IngestError
@@ -170,6 +172,23 @@ def create_app(settings: Settings | None = None, llm: LLM | None = None, runner=
     @app.get("/api/bilibili/status")
     def bilibili_status():
         return sources.bilibili_status(settings)
+
+    @app.post("/api/bilibili/login")
+    def bilibili_login_start():
+        started = source_call(lambda: bili_login.start())
+        return {"key": started.key, "qr": started.qr}
+
+    @app.get("/api/bilibili/login/{key}")
+    def bilibili_login_poll(key: str):
+        state = source_call(lambda: bili_login.poll(key, settings.bilibili_cookie_file))
+        if state == "done":
+            bilibili_client_for(settings).reset_login()
+        return {"state": state}
+
+    @app.delete("/api/bilibili/login", status_code=204)
+    def bilibili_logout():
+        bili_login.logout(settings.bilibili_cookie_file)
+        bilibili_client_for(settings).reset_login()
 
     @app.post("/api/videos/{video_id}/ask")
     def ask(video_id: str, req: AskRequest, conn=Depends(get_conn)):

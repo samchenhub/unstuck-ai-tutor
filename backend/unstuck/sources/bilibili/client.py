@@ -6,6 +6,7 @@ import threading
 import time
 import urllib.parse
 from collections.abc import Callable
+from pathlib import Path
 
 from yt_dlp import YoutubeDL
 from yt_dlp.cookies import CookieLoadError
@@ -44,10 +45,13 @@ class BiliClient:
         self,
         cookies_browser: str = "",
         fetch_json: Callable[[str], dict] | None = None,
+        *,
+        cookie_file: Path | None = None,
         sleep: Callable[[float], None] = time.sleep,
         clock: Callable[[], float] = time.time,
     ):
         self.cookies_browser = cookies_browser
+        self.cookie_file = cookie_file  # saved by the QR-code login; preferred over the browser's cookies
         self._fetch_json = fetch_json or self._ydl_fetch_json
         self._sleep = sleep
         self._clock = clock
@@ -59,7 +63,9 @@ class BiliClient:
 
     def ydl_options(self) -> dict:
         opts = {"quiet": True, "no_warnings": True, "noprogress": True, "http_headers": HEADERS}
-        if self.cookies_browser and not self.cookies_unavailable:
+        if self.has_saved_login() and not self.cookies_unavailable:
+            opts["cookiefile"] = str(self.cookie_file)
+        elif self.cookies_browser and not self.cookies_unavailable:
             opts["cookiesfrombrowser"] = (self.cookies_browser,)
         return opts
 
@@ -76,13 +82,21 @@ class BiliClient:
             except CookieLoadError:
                 # yt-dlp reads browser cookies lazily on the first request; if that fails (browser
                 # running/locked, no permission), carry on anonymously instead of failing every call.
-                if self.cookies_unavailable or not self.cookies_browser:
+                if self.cookies_unavailable or not (self.cookies_browser or self.has_saved_login()):
                     raise
-                log.warning("cannot read %s cookies; continuing without Bilibili login", self.cookies_browser,
-                            exc_info=True)
+                log.warning("cannot read the Bilibili login cookies; continuing without login", exc_info=True)
                 self.cookies_unavailable = True
                 self._ydl = None
                 return self._ydl_urlopen_json(url)
+
+    def has_saved_login(self) -> bool:
+        return self.cookie_file is not None and self.cookie_file.is_file()
+
+    def reset_login(self) -> None:
+        """The saved login changed (QR login or logout): reload cookies and check the login again."""
+        self._login = None
+        self.cookies_unavailable = False
+        self._drop_cookie_jar()
 
     def _drop_cookie_jar(self) -> None:
         with self._lock:

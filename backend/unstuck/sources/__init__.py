@@ -97,5 +97,7 @@ def for_video(video: Video, settings: Settings) -> Source:
 
 
 def bilibili_status(settings: Settings) -> dict:
+    client = client_for(settings)
     browser = settings.bilibili_cookies_browser
-    return {"logged_in": bool(browser) and client_for(settings).check_login(), "cookies_browser": browser}
+    source = "qr" if client.has_saved_login() else ("browser" if browser else None)
+    return {"logged_in": source is not None and client.check_login(), "cookies_browser": browser, "login": source}

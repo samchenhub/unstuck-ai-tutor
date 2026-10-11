@@ -268,3 +268,40 @@ def test_retry_gives_failed_frames_another_chance(client, conn, runner):
     repo.save_frame_description(conn, frame.id, None)
     client.post(f"/api/videos/{vid}/retry")
     assert [f.status for f in repo.get_keyframes(conn, vid)] == ["pending"]
+
+
+def test_qr_login_endpoints(client, settings, monkeypatch):
+    from unstuck.sources.bilibili import login
+    from unstuck.sources.bilibili.source import client_for
+
+    monkeypatch.setattr(login, "start", lambda: login.QrStart(key="k1", qr="data:image/svg+xml;base64,AAA"))
+    states = iter(["waiting", "done"])
+    seen = []
+
+    def poll(key, cookie_file):
+        seen.append((key, cookie_file))
+        state = next(states)
+        if state == "done":
+            cookie_file.write_text("# Netscape HTTP Cookie File\n", encoding="utf-8")
+        return state
+
+    monkeypatch.setattr(login, "poll", poll)
+    assert client.post("/api/bilibili/login").json() == {"key": "k1", "qr": "data:image/svg+xml;base64,AAA"}
+    assert client.get("/api/bilibili/login/k1").json() == {"state": "waiting"}
+    assert client.get("/api/bilibili/login/k1").json() == {"state": "done"}
+    assert seen[0] == ("k1", settings.bilibili_cookie_file)
+    assert client_for(settings).has_saved_login()
+    assert client.delete("/api/bilibili/login").status_code == 204
+    assert not settings.bilibili_cookie_file.exists()
+
+
+def test_qr_login_errors_are_502(client, monkeypatch):
+    from unstuck.errors import IngestError
+    from unstuck.sources.bilibili import login
+
+    def fail():
+        raise IngestError("BILIBILI_ERROR", "B站登录接口返回错误（-400）")
+
+    monkeypatch.setattr(login, "start", fail)
+    r = client.post("/api/bilibili/login")
+    assert r.status_code == 502 and r.json()["detail"]["code"] == "BILIBILI_ERROR"

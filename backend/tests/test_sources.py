@@ -129,12 +129,26 @@ def test_resolve_app_share_text(settings):
 
 
 def test_bilibili_status_uses_check_login(settings, monkeypatch):
+    import dataclasses
+
     class Client:
+        saved = False
+
+        def has_saved_login(self):
+            return self.saved
+
         def check_login(self):
             return True
 
-    monkeypatch.setattr(sources, "client_for", lambda s: Client())
-    assert sources.bilibili_status(settings) == {"logged_in": True, "cookies_browser": settings.bilibili_cookies_browser}
+    client = Client()
+    monkeypatch.setattr(sources, "client_for", lambda s: client)
+    chrome = dataclasses.replace(settings, bilibili_cookies_browser="chrome")
+    assert sources.bilibili_status(chrome) == {"logged_in": True, "cookies_browser": "chrome", "login": "browser"}
+    client.saved = True
+    assert sources.bilibili_status(chrome)["login"] == "qr"
+    nothing = dataclasses.replace(settings, bilibili_cookies_browser="")
+    client.saved = False
+    assert sources.bilibili_status(nothing) == {"logged_in": False, "cookies_browser": "", "login": None}
 
 
 def test_plain_links_without_scheme_keep_their_part(settings):

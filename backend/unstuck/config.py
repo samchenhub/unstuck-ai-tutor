@@ -27,6 +27,11 @@ class Settings:
     def db_path(self) -> Path:
         return self.data_dir / "unstuck.db"
 
+    @property
+    def bilibili_cookie_file(self) -> Path:
+        """Where the QR-code login keeps its cookies."""
+        return self.data_dir / "bilibili_cookies.txt"
+
     def video_dir(self, video_id: str) -> Path:
         return self.data_dir / "videos" / video_id
 
@@ -50,7 +55,8 @@ def load_settings(env_file: bool = True) -> Settings:
         max_duration_s=int(os.getenv("MAX_DURATION_S", "7200")),
         llm_disable_thinking=_flag(os.getenv("LLM_DISABLE_THINKING", "1")),
         llm_max_concurrency=int(os.getenv("LLM_MAX_CONCURRENCY", "2")),
-        bilibili_cookies_browser=os.getenv("BILIBILI_COOKIES_BROWSER", "chrome").strip(),
+        # Chrome's cookies are unreadable to other programs on Windows (app-bound encryption): use the QR login.
+        bilibili_cookies_browser=os.getenv("BILIBILI_COOKIES_BROWSER", "" if os.name == "nt" else "chrome").strip(),
         groq_api_key=os.getenv("GROQ_API_KEY", "").strip(),
         groq_base_url=os.getenv("GROQ_BASE_URL", "https://api.groq.com/openai/v1"),
         groq_whisper_model=os.getenv("GROQ_WHISPER_MODEL", "whisper-large-v3-turbo"),
