@@ -45,6 +45,7 @@ describe('automatic retry after a rate limit', () => {
     expect(stageStateLabel(limited, 'vision')).toBe('等待重试')
     expect(stageStateLabel(limited, 'timeline')).toBe('完成')
     expect(stageStateLabel({ ...limited, auto_retry_at: 0 }, 'vision')).toBe('失败')
+    expect(stageStateLabel({ ...limited, status: 'importing' }, 'vision')).toBe('失败')  // the retry is running now
   })
 
   it('says when the next attempt happens', () => {

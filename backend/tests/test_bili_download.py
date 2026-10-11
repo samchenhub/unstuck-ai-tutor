@@ -322,3 +322,38 @@ def test_progress_waits_for_gaps(tmp_path):
                     on_progress=lambda done, total: seen.append(done))
     assert seen == sorted(seen) and seen[-1] == len(MANY)
     assert all(done % CHUNK == 0 or done == len(MANY) for done in seen)
+
+
+def test_one_bad_offset_cannot_refresh_forever_while_others_progress(tmp_path):
+    """Other chunks' progress restores the shared budget; the bad chunk still gives up after its own budget."""
+    import time as _time
+
+    fetched = []
+
+    def get_url():
+        fetched.append(1)
+        return f"u{len(fetched)}"
+
+    def opener(url, headers):
+        start, end = parse_range(headers)
+        if start == 3 * CHUNK:
+            _time.sleep(0.003)  # let the other workers write chunks (and restore the shared budget) meanwhile
+            raise OSError("bad offset")
+        return 206, MANY[start:end + 1], len(MANY)
+
+    with pytest.raises(IngestError):
+        download_ranges(get_url, tmp_path / "v.mp4", headers={}, chunk_size=CHUNK, workers=4,
+                        opener=opener, sleep=lambda s: None)
+    assert len(fetched) == 5  # the first URL + this chunk's 4 refreshes
+
+
+def test_a_cut_off_whole_file_reply_is_not_trusted_past_the_last_full_chunk(tmp_path):
+    def opener(url, headers):
+        start, end = parse_range(headers)
+        if start == 0:
+            return 200, MANY[:int(2.5 * CHUNK)], len(MANY)  # ignored Range, then the body was cut off
+        return 206, MANY[start:end + 1], len(MANY)
+
+    dest = download_ranges(lambda: "A", tmp_path / "v.mp4", headers={}, chunk_size=CHUNK, workers=1,
+                           opener=opener, sleep=lambda s: None)
+    assert dest.read_bytes() == MANY

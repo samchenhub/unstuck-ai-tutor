@@ -15,7 +15,7 @@ function transcribing(video: Video): boolean {
 
 export function stageStateLabel(video: Video, stage: Stage): string {
   const state = video.stage_states[stage] ?? 'pending'
-  if (state === 'failed' && video.auto_retry_at > 0) return '等待重试'
+  if (state === 'failed' && video.auto_retry_at > 0 && video.status !== 'importing') return '等待重试'
   if (stage === 'transcript' && transcribing(video)) return `已转写 ${formatTime(video.transcribed_until)}`
   return STATE_LABELS[state]
 }

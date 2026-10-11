@@ -97,7 +97,8 @@ def create_app(settings: Settings | None = None, llm: LLM | None = None, runner=
         return video
 
     def start_import(conn, video_id: str) -> dict:
-        repo.update_video(conn, video_id, status="importing")
+        # A run the user asked for starts a fresh round of automatic retries if it is rate-limited again.
+        repo.update_video(conn, video_id, status="importing", auto_retries=0)
         runner.submit(video_id)
         return asdict(repo.get_video(conn, video_id))
 

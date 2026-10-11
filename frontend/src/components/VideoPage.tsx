@@ -36,12 +36,12 @@ export function VideoPage({ videoId }: { videoId: string }) {
   useEffect(() => {
     let cancelled = false
     let timer: number | undefined
-    let lastStatus: Video['status'] | null = null
+    let last: Video | null = null
     const load = async () => {
       try {
         const next = await api.getVideo(videoId)
         if (cancelled) return
-        lastStatus = next.status
+        last = next
         setVideo(next)
         setError(null)
         if (next.status === 'importing') timer = window.setTimeout(load, POLL_MS)
@@ -50,8 +50,10 @@ export function VideoPage({ videoId }: { videoId: string }) {
       } catch (err) {
         if (cancelled) return
         setError(err instanceof Error ? err.message : String(err))
-        // A transient failure must not end polling while the import is running or nothing has loaded yet.
-        if (lastStatus === null || lastStatus === 'importing') timer = window.setTimeout(load, POLL_MS)
+        // A transient failure must not end polling while the import is running, a retry is planned,
+        // or nothing has loaded yet.
+        if (last === null || last.status === 'importing') timer = window.setTimeout(load, POLL_MS)
+        else if (last.auto_retry_at > 0) timer = window.setTimeout(load, RETRY_POLL_MS)
       }
     }
     void load()

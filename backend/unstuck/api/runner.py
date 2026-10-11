@@ -33,10 +33,11 @@ class PipelineRunner:
         self._timer = timer
         self._clock = clock
         self._timers: dict[str, object] = {}
+        self._closed = False
 
     def submit(self, video_id: str) -> Future | None:
         with self._lock:
-            if video_id in self._running:
+            if self._closed or video_id in self._running:
                 return None
             self._running.add(video_id)
         return self._executor.submit(self._run, video_id)
@@ -61,11 +62,15 @@ class PipelineRunner:
         """After a rate-limited run, come back later on our own (the free tier recovers in minutes)."""
         video = repo.get_video(conn, video_id)
         if not rate_limited:
+            self._cancel(video_id)  # e.g. a manual retry got through before the planned one
             if video.auto_retries or video.auto_retry_at:
                 repo.update_video(conn, video_id, auto_retries=0, auto_retry_at=0.0)
             return
         if video.auto_retries >= len(AUTO_RETRY_DELAYS_S):
-            repo.update_video(conn, video_id, auto_retry_at=0.0, error_message=GAVE_UP_MESSAGE)
+            changes = {"auto_retry_at": 0.0}
+            if video.status == "ready":  # keep a critical stage's own error message
+                changes["error_message"] = GAVE_UP_MESSAGE
+            repo.update_video(conn, video_id, **changes)
             return
         delay = AUTO_RETRY_DELAYS_S[video.auto_retries]
         repo.update_video(conn, video_id, auto_retries=video.auto_retries + 1, auto_retry_at=self._clock() + delay)
@@ -76,11 +81,19 @@ class PipelineRunner:
         handle = self._timer(delay, self.submit, args=(video_id,))
         handle.daemon = True
         with self._lock:
+            if self._closed:
+                return
             previous = self._timers.pop(video_id, None)
             self._timers[video_id] = handle
         if previous is not None:
             previous.cancel()
         handle.start()
+
+    def _cancel(self, video_id: str) -> None:
+        with self._lock:
+            handle = self._timers.pop(video_id, None)
+        if handle is not None:
+            handle.cancel()
 
     def schedule_pending(self, conn: sqlite3.Connection) -> None:
         """Re-plan automatic retries that were pending when the app stopped."""
@@ -99,6 +112,7 @@ class PipelineRunner:
 
     def shutdown(self) -> None:
         with self._lock:
+            self._closed = True
             timers, self._timers = list(self._timers.values()), {}
         for handle in timers:
             handle.cancel()

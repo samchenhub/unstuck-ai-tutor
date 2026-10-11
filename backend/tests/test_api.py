@@ -211,3 +211,10 @@ def test_playback_source_error_is_502(client, conn, monkeypatch):
 def test_bilibili_status(client, monkeypatch):
     monkeypatch.setattr(sources, "bilibili_status", lambda settings: {"logged_in": False, "cookies_browser": "chrome"})
     assert client.get("/api/bilibili/status").json() == {"logged_in": False, "cookies_browser": "chrome"}
+
+
+def test_manual_retry_restarts_the_automatic_retry_count(client, conn, runner):
+    repo.insert_video(conn, "dQw4w9WgXcQ", "https://www.youtube.com/watch?v=dQw4w9WgXcQ")
+    repo.update_video(conn, "dQw4w9WgXcQ", status="ready", auto_retries=5)
+    assert client.post("/api/videos/dQw4w9WgXcQ/retry").status_code == 202
+    assert repo.get_video(conn, "dQw4w9WgXcQ").auto_retries == 0

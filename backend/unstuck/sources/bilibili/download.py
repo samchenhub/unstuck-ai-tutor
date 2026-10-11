@@ -91,6 +91,7 @@ class _Download:
         self._next_slot = 0
         self.mirrors = self._fetch_mirrors()
         self.set_aside: set[str] = set()
+        self.refreshing = False
 
     def _fetch_mirrors(self) -> list[str]:
         got = self.get_url()
@@ -109,26 +110,40 @@ class _Download:
             usable = [m for m in self.mirrors if m not in self.set_aside] or self.mirrors
             return usable[slot % len(usable)]
 
-    def give_up_on(self, url: str, *, expired: bool = False) -> None:
-        """Set a failing mirror aside; refresh the list when none is left or the URLs expired (403)."""
+    def give_up_on(self, url: str, *, expired: bool = False, own_refreshes: int = 0) -> bool:
+        """Set a failing mirror aside; refresh the list when none is left or the URLs expired (403).
+
+        Returns True if this call refreshed the list. Two budgets: the shared one (restored by progress) and
+        the calling chunk's own, so one permanently bad offset cannot keep refreshing while others progress.
+        The new URLs are fetched outside the lock, by one worker at a time.
+        """
         with self.lock:
-            if url not in self.mirrors:
-                return  # another worker already refreshed the list
+            if url not in self.mirrors or self.refreshing:
+                return False  # another worker already refreshed the list, or is doing it now
             if not expired:
                 self.set_aside.add(url)
                 if any(m not in self.set_aside for m in self.mirrors):
                     log.warning("bilibili download: setting mirror %s aside", _host(url))
-                    return
-            self.refreshes += 1
-            if self.refreshes > self.max_refreshes:
+                    return False
+            if self.refreshes >= self.max_refreshes or own_refreshes >= self.max_refreshes:
                 raise _fail()
+            self.refreshes += 1
             self.progress = 0
-            try:
-                self.mirrors, self.set_aside = self._fetch_mirrors(), set()
-            except (IngestError, *_FAILURES) as exc:
-                # No fresh URL right now (e.g. Bilibili blocked the request): count it as a failed attempt.
-                log.warning("bilibili URL refresh failed: %s", exc)
-                self.sleep(2)
+            self.refreshing = True
+        try:
+            mirrors = self._fetch_mirrors()
+        except (IngestError, *_FAILURES) as exc:
+            # No fresh URL right now (e.g. Bilibili blocked the request): count it as a failed attempt.
+            log.warning("bilibili URL refresh failed: %s", exc)
+            mirrors = None
+            self.sleep(2)
+        finally:
+            with self.lock:
+                self.refreshing = False
+        if mirrors is not None:
+            with self.lock:
+                self.mirrors, self.set_aside = mirrors, set()
+        return True
 
     def wrote(self, count: int) -> None:
         with self.lock:
@@ -183,7 +198,7 @@ class _Download:
 
     def chunk(self, start: int) -> int:
         """Fetch bytes [start, start + chunk_size) into the file, resuming after partial reads; returns end offset."""
-        pos, failures = start, 0
+        pos, failures, refreshes = start, 0, 0
         url = self.url()
         while not self.abort.is_set():
             total = self.total
@@ -201,7 +216,7 @@ class _Download:
                 log.warning("bilibili download size mismatch: %d != %d", size, self.total)
                 status, body = 0, b""
             if status == 403:
-                self.give_up_on(url, expired=True)
+                refreshes += self.give_up_on(url, expired=True, own_refreshes=refreshes)
                 url, failures = self.url(), 0
                 continue
             # A 200 means the server ignored Range and sent the whole file: only usable for the very first request.
@@ -218,7 +233,7 @@ class _Download:
             failures += 1
             log.warning("bilibili download failure %d at byte %d (status %s)", failures, pos, status)
             if failures >= self.attempts_per_url:
-                self.give_up_on(url)
+                refreshes += self.give_up_on(url, own_refreshes=refreshes)
                 url, failures = self.url(), 0
             else:
                 self.sleep(min(2 ** failures, 8))
@@ -253,7 +268,8 @@ def download_ranges(
             if total is None:
                 raise _fail()
             out.truncate(total)
-            first = min(-(-written // chunk_size) * chunk_size, total)
+            # Only whole chunks count: a cut-off reply that ignored Range leaves its last chunk to fetch again.
+            first = total if written >= total else written // chunk_size * chunk_size
             for start in range(0, first, chunk_size):  # usually just chunk 0 (more if a server ignored Range)
                 dl.completed(start)
             starts = range(first, total, chunk_size)

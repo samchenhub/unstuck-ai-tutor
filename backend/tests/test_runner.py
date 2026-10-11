@@ -116,7 +116,7 @@ def test_rate_limited_run_schedules_an_automatic_retry(settings, fake_llm, conn)
 
 def test_automatic_retries_stop_after_the_last_delay(settings, fake_llm, conn):
     repo.insert_video(conn, VID, "https://youtu.be/abcdefghijk")
-    repo.update_video(conn, VID, auto_retries=5, error_code="MODEL_BUSY", error_message="x")
+    repo.update_video(conn, VID, status="ready", auto_retries=5, error_code="MODEL_BUSY", error_message="x")
     timers = FakeTimers()
     runner = PipelineRunner(settings, lambda: fake_llm, pipeline=RateLimited([True]), timer=timers, clock=lambda: 0.0)
     runner.submit(VID).result(timeout=5)
@@ -134,3 +134,23 @@ def test_scheduled_retries_survive_a_restart(settings, fake_llm, conn):
     assert [(t["delay"], t["args"]) for t in timers.started] == [(100.0, (VID,))]
     runner.shutdown()
     assert timers.started[0]["cancelled"]
+
+
+def test_a_successful_run_cancels_the_pending_retry(settings, fake_llm, conn):
+    repo.insert_video(conn, VID, "https://youtu.be/abcdefghijk")
+    timers = FakeTimers()
+    runner = PipelineRunner(settings, lambda: fake_llm, pipeline=RateLimited([True, False]), timer=timers, clock=lambda: 0.0)
+    runner.submit(VID).result(timeout=5)
+    runner.submit(VID).result(timeout=5)  # e.g. the user clicked 重试 and it got through
+    assert timers.started[0]["cancelled"]
+    runner.shutdown()
+
+
+def test_nothing_is_scheduled_or_submitted_after_shutdown(settings, fake_llm, conn):
+    repo.insert_video(conn, VID, "https://youtu.be/abcdefghijk")
+    timers = FakeTimers()
+    runner = PipelineRunner(settings, lambda: fake_llm, pipeline=RateLimited([True]), timer=timers, clock=lambda: 0.0)
+    runner.shutdown()
+    assert runner.submit(VID) is None
+    runner._schedule(VID, 10)
+    assert timers.started == []
