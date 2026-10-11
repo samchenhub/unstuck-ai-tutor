@@ -186,7 +186,8 @@ def test_playback_and_parts(client, conn, monkeypatch):
     repo.insert_video(conn, "BV1Ex4y1G7nG_p2", "u", source="bilibili", course_id="BV1Ex4y1G7nG", part=2)
     monkeypatch.setattr(sources, "for_video", lambda video, settings: FakeBiliSource())
     pb = client.get("/api/videos/BV1Ex4y1G7nG_p2/playback").json()
-    assert pb == {"kind": "mp4", "url": "https://upos.bilivideo.com/v.mp4", "expires_at": 123.0, "duration": 50.0}
+    assert pb == {"kind": "mp4", "url": "https://upos.bilivideo.com/v.mp4", "expires_at": 123.0, "duration": 50.0,
+                  "backup_urls": []}
     parts = client.get("/api/videos/BV1Ex4y1G7nG_p2/parts").json()
     assert [(p["part"], p["imported"]) for p in parts] == [(1, False), (2, True)]
 

@@ -168,16 +168,19 @@ def mp4_playback(data: dict, duration: float, now: float) -> Playback:
     url = _https(durl[0]["url"])
     deadline = (urllib.parse.parse_qs(urllib.parse.urlparse(url).query).get("deadline") or [""])[0]
     expires_at = float(deadline) if deadline.isascii() and deadline.isdigit() else now + DEFAULT_URL_LIFETIME_S
-    return Playback(kind="mp4", url=url, expires_at=expires_at, duration=duration)
+    backups = tuple(_https(u) for u in durl[0].get("backup_url") or [] if u)
+    return Playback(kind="mp4", url=url, expires_at=expires_at, duration=duration, backup_urls=backups)
 
 
-def dash_audio_url(data: dict) -> str | None:
-    """The smallest DASH audio track: plenty for speech-to-text (a 1 h 45 min lecture is ~52 MB vs ~216 MB MP4)."""
+def dash_audio_urls(data: dict) -> list[str]:
+    """The smallest DASH audio track (plenty for speech-to-text: a 1 h 45 min lecture is ~52 MB vs ~216 MB MP4),
+    as its main URL followed by its mirrors; empty when there is no DASH audio."""
     tracks = [a for a in ((data.get("dash") or {}).get("audio") or []) if a.get("baseUrl") or a.get("base_url")]
     if not tracks:
-        return None
+        return []
     track = min(tracks, key=lambda a: a.get("bandwidth") or 0)
-    return _https(track.get("baseUrl") or track["base_url"])
+    backups = track.get("backupUrl") or track.get("backup_url") or []
+    return [_https(u) for u in [track.get("baseUrl") or track["base_url"], *backups] if u]
 
 
 def parts_from_view(view: dict, bvid: str) -> list[Part]:

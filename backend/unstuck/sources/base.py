@@ -34,6 +34,7 @@ class Playback:
     url: str = ""
     expires_at: float = 0.0
     duration: float = 0.0
+    backup_urls: tuple[str, ...] = ()  # mirrors of the same file (Bilibili); the downloader races them
 
 
 @dataclass(frozen=True)

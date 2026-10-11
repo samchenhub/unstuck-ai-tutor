@@ -151,6 +151,11 @@ def test_mp4_playback_upgrades_insecure_urls():
     assert parse.mp4_playback(relative, 10.0, now=0).url == "https://upos.bilivideo.com/x.mp4"
 
 
+def test_mp4_playback_keeps_mirrors():
+    data = {"durl": [{"url": "https://a.bilivideo.com/x.mp4", "backup_url": ["http://b.bilivideo.com/x.mp4", ""]}]}
+    assert parse.mp4_playback(data, 10.0, now=0).backup_urls == ("https://b.bilivideo.com/x.mp4",)
+
+
 def test_mp4_playback_ignores_non_ascii_deadline():
     data = {"durl": [{"url": "https://upos.bilivideo.com/x.mp4?deadline=%C2%B2"}]}
     assert parse.mp4_playback(data, 10.0, now=100.0).expires_at == 100.0 + 3600
@@ -163,12 +168,13 @@ def test_parts_from_view():
     ]
 
 
-def test_dash_audio_url_picks_the_smallest_track():
+def test_dash_audio_urls_pick_the_smallest_track_and_its_mirrors():
     data = {"dash": {"audio": [
         {"id": 30280, "bandwidth": 190000, "baseUrl": "https://upos.bilivideo.com/a-192.m4s"},
-        {"id": 30216, "bandwidth": 66000, "base_url": "http://upos.bilivideo.com/a-64.m4s"},
+        {"id": 30216, "bandwidth": 66000, "base_url": "http://upos.bilivideo.com/a-64.m4s",
+         "backupUrl": ["https://akam.akamaized.net/a-64.m4s"]},
         {"id": 30232, "bandwidth": 130000, "baseUrl": "https://upos.bilivideo.com/a-132.m4s"},
     ]}}
-    assert parse.dash_audio_url(data) == "https://upos.bilivideo.com/a-64.m4s"
-    assert parse.dash_audio_url({"durl": [{"url": "x"}]}) is None
-    assert parse.dash_audio_url({"dash": {"audio": None}}) is None
+    assert parse.dash_audio_urls(data) == ["https://upos.bilivideo.com/a-64.m4s", "https://akam.akamaized.net/a-64.m4s"]
+    assert parse.dash_audio_urls({"durl": [{"url": "x"}]}) == []
+    assert parse.dash_audio_urls({"dash": {"audio": None}}) == []

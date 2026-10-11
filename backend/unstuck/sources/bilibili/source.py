@@ -61,7 +61,11 @@ class BilibiliSource:
         dest = out_dir / "video.mp4"
         if dest.is_file() and dest.stat().st_size > 0:
             return dest
-        return download_ranges(lambda: self.playback(video_id).url, dest, headers=HEADERS)
+        def mirrors() -> list[str]:
+            playback = self.playback(video_id)
+            return [playback.url, *playback.backup_urls]
+
+        return download_ranges(mirrors, dest, headers=HEADERS)
 
     def download_audio(self, video_id: str, out_dir: Path) -> Path:
         """Only the DASH audio track (about a quarter of the MP4), so transcription starts sooner; the MP4 for
@@ -74,21 +78,21 @@ class BilibiliSource:
             return dest
         info = self.fetch_info(video_id)
 
-        def audio_url() -> str:
-            url = parse.dash_audio_url(self.client.playurl_dash(info["bvid"], info["cid"]))
-            if url is None:
+        def audio_urls() -> list[str]:
+            urls = parse.dash_audio_urls(self.client.playurl_dash(info["bvid"], info["cid"]))
+            if not urls:
                 raise IngestError("PLAYBACK_UNAVAILABLE", "B站没有返回音频地址")
-            return url
+            return urls
 
         try:
-            first = audio_url()
+            first = audio_urls()
         except IngestError as exc:
             if exc.code != "PLAYBACK_UNAVAILABLE":
                 raise
             log.info("no DASH audio for %s, downloading the MP4 instead", video_id)
             return self.download_video(video_id, out_dir)
         urls = iter([first])  # the downloader asks for a URL up front and again after repeated failures
-        return download_ranges(lambda: next(urls, None) or audio_url(), dest, headers=HEADERS)
+        return download_ranges(lambda: next(urls, None) or audio_urls(), dest, headers=HEADERS)
 
     def playback(self, video_id: str, quality: int = 720) -> Playback:
         info = self.fetch_info(video_id)

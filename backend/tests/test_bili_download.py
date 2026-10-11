@@ -251,3 +251,44 @@ def test_short_pwrite_is_completed(tmp_path, monkeypatch):
     monkeypatch.setattr(os, "pwrite", lambda fd, data, pos: real(fd, bytes(data)[:100], pos))
     run(Opener(), tmp_path)
     assert run.dest.read_bytes() == DATA
+
+
+def test_mirror_race_downloads_from_the_fastest_host(tmp_path):
+    """get_url may return mirrors of one file; a small probe picks the first that answers in full."""
+    import threading
+
+    release = threading.Event()
+    calls = []
+
+    def opener(url, headers):
+        calls.append((url, headers["Range"]))
+        if url == "slow":
+            release.wait(5)
+        if url == "broken":
+            return 403, b"", None
+        start, end = parse_range(headers)
+        return 206, DATA[start:end + 1], len(DATA)
+
+    dest = download_ranges(lambda: ["slow", "broken", "fast"], tmp_path / "v.mp4", headers={},
+                           chunk_size=CHUNK, opener=opener, sleep=lambda s: None)
+    release.set()
+    assert dest.read_bytes() == DATA
+    downloads = [url for url, rng in calls if rng != "bytes=0-524287"]
+    assert downloads and set(downloads) == {"fast"}
+    assert {url for url, rng in calls if rng == "bytes=0-524287"} >= {"broken", "fast"}
+
+
+def test_mirror_race_falls_back_to_the_first_when_all_probes_fail(tmp_path):
+    calls = []
+
+    def opener(url, headers):
+        calls.append((url, headers["Range"]))
+        if headers["Range"] == "bytes=0-524287":
+            return 503, b"", None
+        start, end = parse_range(headers)
+        return 206, DATA[start:end + 1], len(DATA)
+
+    dest = download_ranges(lambda: ["m1", "m2"], tmp_path / "v.mp4", headers={},
+                           chunk_size=CHUNK, opener=opener, sleep=lambda s: None)
+    assert dest.read_bytes() == DATA
+    assert {url for url, rng in calls if rng != "bytes=0-524287"} == {"m1"}

@@ -3,7 +3,9 @@
 The CDN drops long single connections, and individual nodes behind a URL misbehave intermittently
 (same-offset IncompleteRead, refused connections), so retrying one URL forever cannot succeed.
 This downloader keeps partial bytes, resumes from the current offset, and fetches a fresh playback URL
-(which usually lands on another node) after repeated failures.
+(which usually lands on another node) after repeated failures. Speed differs a lot between the mirrors
+Bilibili offers for one file (1.4 vs 12 MB/s measured side by side), so when given several it probes them
+and downloads from the first that answers.
 """
 
 import http.client
@@ -26,6 +28,7 @@ _TIMEOUT_S = 30
 _FAILURES = (OSError, urllib.error.URLError, TimeoutError, http.client.HTTPException)
 _PROGRESS_CHUNKS = 4
 _TOTAL = re.compile(r"/(\d+)\s*$")
+_PROBE_BYTES = 512 * 1024
 
 Opener = Callable[[str, dict[str, str]], tuple[int, bytes, int | None]]
 
@@ -50,6 +53,33 @@ def _open_range(url: str, headers: dict[str, str]) -> tuple[int, bytes, int | No
         length = resp.headers.get("Content-Length")
         total = int(length) if length and length.isdigit() else None
     return status, body, total
+
+
+def _fastest(candidates: str | list[str], headers: dict[str, str], opener: Opener) -> str:
+    """Race a small ranged GET on every mirror and return the first that answers in full (else the first)."""
+    if isinstance(candidates, str):
+        return candidates
+    if len(candidates) < 2:
+        return candidates[0]
+
+    def probe(url: str) -> str | None:
+        try:
+            status, body, total = opener(url, {**headers, "Range": f"bytes=0-{_PROBE_BYTES - 1}"})
+        except _FAILURES:
+            return None
+        complete = len(body) >= min(_PROBE_BYTES, total or _PROBE_BYTES)
+        return url if status < 400 and body and complete else None
+
+    pool = ThreadPoolExecutor(max_workers=len(candidates))
+    try:
+        for future in as_completed([pool.submit(probe, url) for url in candidates]):
+            if winner := future.result():
+                if winner != candidates[0]:
+                    log.info("bilibili download: using mirror %s", winner.split("/")[2] if "//" in winner else winner)
+                return winner
+    finally:
+        pool.shutdown(wait=False)  # slower probes finish (or time out) in the background
+    return candidates[0]
 
 
 def _fail() -> IngestError:
@@ -79,7 +109,10 @@ class _Download:
         self.refreshes = 0
         self.progress = 0  # bytes written since the last refresh
         self.total: int | None = None
-        self.url = get_url()
+        self.url = self._next_url()
+
+    def _next_url(self) -> str:
+        return _fastest(self.get_url(), self.headers, self.opener)
 
     def refresh(self, failed_url: str) -> str:
         """Replace the URL a worker failed on; if another worker already did, just adopt the new one."""
@@ -90,7 +123,7 @@ class _Download:
                     raise _fail()
                 self.progress = 0
                 try:
-                    self.url = self.get_url()
+                    self.url = self._next_url()
                 except (IngestError, *_FAILURES) as exc:
                     # No fresh URL right now (e.g. Bilibili blocked the request): count it as a failed attempt.
                     log.warning("bilibili URL refresh failed: %s", exc)
@@ -146,7 +179,7 @@ class _Download:
 
 
 def download_ranges(
-    get_url: Callable[[], str],
+    get_url: Callable[[], str | list[str]],  # a URL, or mirrors of the same file (the fastest is used)
     dest: Path,
     *,
     headers: dict[str, str],

@@ -58,7 +58,8 @@ def test_playback_and_parts():
 
 DASH = {"code": 0, "data": {"dash": {"audio": [
     {"id": 30280, "bandwidth": 190000, "baseUrl": "https://upos.bilivideo.com/a-192.m4s"},
-    {"id": 30216, "bandwidth": 66000, "baseUrl": "https://upos.bilivideo.com/a-64.m4s"},
+    {"id": 30216, "bandwidth": 66000, "baseUrl": "https://upos.bilivideo.com/a-64.m4s",
+     "backupUrl": ["https://upos-mirror.akamaized.net/a-64.m4s"]},
 ]}}}
 
 
@@ -76,13 +77,14 @@ def fake_cdn(monkeypatch, files):
 
 
 def test_audio_downloads_only_the_smallest_dash_track(monkeypatch, tmp_path):
-    seen = fake_cdn(monkeypatch, {"a-64.m4s": b"audiodata", "v.mp4": b"mp4data"})
+    seen = fake_cdn(monkeypatch, {"upos.bilivideo.com/a-64.m4s": b"audiodata",
+                                  "akamaized.net/a-64.m4s": b"audiodata", "v.mp4": b"mp4data"})
     routes = base_routes(GOOD_SUB)
     src = source({"fnval=16": [DASH], **routes})
     out = tmp_path / "vid"
     assert src.download_audio(f"{BV}_p2", out) == out / "audio.m4a"
     assert (out / "audio.m4a").read_bytes() == b"audiodata"
-    assert {url for url, _h in seen} == {"https://upos.bilivideo.com/a-64.m4s"}
+    assert {url for url, _h in seen} <= {"https://upos.bilivideo.com/a-64.m4s", "https://upos-mirror.akamaized.net/a-64.m4s"}
     assert seen[0][1]["Referer"] == "https://www.bilibili.com/"  # DASH streams check the Referer
     n = len(seen)
     assert src.download_audio(f"{BV}_p2", out) == out / "audio.m4a"

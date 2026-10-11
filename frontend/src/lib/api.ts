@@ -51,6 +51,7 @@ export interface Playback {
   url: string
   expires_at: number
   duration: number
+  backup_urls: string[]
 }
 
 export interface Part {
