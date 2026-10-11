@@ -75,6 +75,7 @@ VIDEO_COLUMNS_ADDED = {
     "part_title": "TEXT NOT NULL DEFAULT ''",
     "parts_total": "INTEGER NOT NULL DEFAULT 1",
     "thumbnail": "TEXT NOT NULL DEFAULT ''",
+    "transcribed_until": "REAL NOT NULL DEFAULT 0",
 }
 
 

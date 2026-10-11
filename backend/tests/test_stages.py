@@ -24,6 +24,10 @@ def sentences(n):
     return [Cue(i * 5.0, (i + 1) * 5.0, f"sentence number {i}.") for i in range(n)]
 
 
+def progress_events(cues):
+    return [stages.transcribe.TranscriptProgress([c], c.end) for c in cues]
+
+
 def test_metadata_stores_info(ctx, monkeypatch):
     info = {"id": VID, "title": "Dot products", "channel": "3B", "duration": 300}
     monkeypatch.setattr(youtube, "fetch_info", lambda video_id: info)
@@ -59,18 +63,19 @@ def test_transcript_falls_back_to_whisper(ctx, monkeypatch, tmp_path):
     youtube.save_info({"id": VID}, ctx.video_dir / "info.json")
     monkeypatch.setattr(youtube, "fetch_captions", lambda info: None)
     monkeypatch.setattr(youtube, "download_audio", lambda video_id, out_dir: tmp_path / "audio.m4a")
-    monkeypatch.setattr(stages.transcribe, "transcribe", lambda path, model: sentences(3))
+    monkeypatch.setattr(stages.transcribe, "iter_transcript", lambda path, model, start=0.0: progress_events(sentences(3)))
 
     stages.stage_transcript(ctx)
 
     assert len(repo.get_cues(ctx.conn, VID)) == 3
+    assert repo.get_video(ctx.conn, VID).transcribed_until == 15.0
 
 
 def test_transcript_with_nothing_fails(ctx, monkeypatch, tmp_path):
     youtube.save_info({"id": VID}, ctx.video_dir / "info.json")
     monkeypatch.setattr(youtube, "fetch_captions", lambda info: None)
     monkeypatch.setattr(youtube, "download_audio", lambda video_id, out_dir: tmp_path / "audio.m4a")
-    monkeypatch.setattr(stages.transcribe, "transcribe", lambda path, model: [])
+    monkeypatch.setattr(stages.transcribe, "iter_transcript", lambda path, model, start=0.0: iter([]))
     with pytest.raises(IngestError) as err:
         stages.stage_transcript(ctx)
     assert err.value.code == "NO_TRANSCRIPT"
@@ -175,3 +180,59 @@ def test_stages_use_the_videos_source(ctx, monkeypatch):
 
     stages.stage_download(ctx)
     assert fake.downloaded == [VID]
+
+
+def _whisper_only(ctx, monkeypatch, tmp_path):
+    youtube.save_info({"id": VID}, ctx.video_dir / "info.json")
+    monkeypatch.setattr(youtube, "fetch_captions", lambda info: None)
+    monkeypatch.setattr(youtube, "download_audio", lambda video_id, out_dir: tmp_path / "audio.m4a")
+
+
+def test_transcription_opens_asking_after_the_first_minute(ctx, monkeypatch, tmp_path):
+    """Long videos: cues are published (ask_ready) while Whisper is still running."""
+    _whisper_only(ctx, monkeypatch, tmp_path)
+    seen = []
+
+    def events(path, model, start=0.0):
+        for cue in sentences(100):  # 500 s of speech, 5 s per cue
+            yield stages.transcribe.TranscriptProgress([cue], cue.end)
+            video = repo.get_video(ctx.conn, VID)
+            seen.append((cue.end, video.ask_ready, video.transcribed_until, len(repo.get_cues(ctx.conn, VID))))
+
+    monkeypatch.setattr(stages.transcribe, "iter_transcript", events)
+    stages.stage_transcript(ctx)
+
+    first_ready = next(s for s in seen if s[1])
+    assert first_ready[:3] == (60.0, True, 60.0) and first_ready[3] == 12
+    assert [s[2] for s in seen if s[0] in (355.0, 360.0, 365.0)] == [60.0, 360.0, 360.0]  # then every 300 s
+    video = repo.get_video(ctx.conn, VID)
+    assert video.transcribed_until == 500.0 and len(repo.get_cues(ctx.conn, VID)) == 100
+    assert repo.search_vectors(ctx.conn, VID, ctx.llm.embed(["sentence"])[0], k=1)
+
+
+def test_transcription_resumes_where_it_stopped(ctx, monkeypatch, tmp_path):
+    _whisper_only(ctx, monkeypatch, tmp_path)
+    done = sentences(12)
+    repo.replace_cues(ctx.conn, VID, done)
+    repo.update_video(ctx.conn, VID, transcribed_until=60.0, ask_ready=True)
+    starts = []
+
+    def events(path, model, start=0.0):
+        starts.append(start)
+        return progress_events([Cue(60.0 + i * 5.0, 65.0 + i * 5.0, f"later {i}.") for i in range(4)])
+
+    monkeypatch.setattr(stages.transcribe, "iter_transcript", events)
+    stages.stage_transcript(ctx)
+
+    assert starts == [60.0]
+    cues = repo.get_cues(ctx.conn, VID)
+    assert cues[:12] == done and [c.text for c in cues[12:]] == [f"later {i}." for i in range(4)]
+    assert repo.get_video(ctx.conn, VID).transcribed_until == 80.0
+
+
+def test_captions_reset_transcription_progress(ctx, monkeypatch):
+    youtube.save_info({"id": VID}, ctx.video_dir / "info.json")
+    repo.update_video(ctx.conn, VID, transcribed_until=60.0)
+    monkeypatch.setattr(youtube, "fetch_captions", lambda info: sentences(3))
+    stages.stage_transcript(ctx)
+    assert repo.get_video(ctx.conn, VID).transcribed_until == 0.0

@@ -6,7 +6,7 @@ from unstuck.config import Settings
 from unstuck.db import repo
 from unstuck.ingest import indexer
 from unstuck.llm.base import LLM, ModelBusyError
-from unstuck.models import Chat, Keyframe, Segment
+from unstuck.models import Chat, Keyframe, Segment, Video
 from unstuck.timefmt import fmt_ts
 from unstuck.tutor import context
 from unstuck.tutor.frame import live_frame_description
@@ -51,6 +51,13 @@ def _current_frame(
     if nearest is not None:
         return context.FrameContext(t=nearest.t, text=context.describe_keyframe(nearest), live=False)
     return None
+
+
+def _transcript_until(video: Video) -> float | None:
+    """How far local transcription has got, while it is still running (None once the transcript is complete)."""
+    if video.stage_states.get("transcript") == "done" or video.transcribed_until <= 0:
+        return None
+    return video.transcribed_until
 
 
 def _current_transcript(window: list[Segment], t: float) -> str:
@@ -124,6 +131,7 @@ def prepare_messages(
         retrieved=context.select_retrieved(ranked, segments, window),
         history=history,
         visual_available=visual,
+        transcript_until=_transcript_until(video),
     ))
 
     messages = [{"role": "system", "content": SYSTEM_PROMPT}]

@@ -84,3 +84,4 @@ class Video:
     part_title: str = ""
     parts_total: int = 1
     thumbnail: str = ""
+    transcribed_until: float = 0.0  # seconds covered by local speech-to-text so far (0 for caption transcripts)

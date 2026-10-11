@@ -183,3 +183,10 @@ def test_data_tag_variants_are_neutralised(evil):
     assert data.count("<video_data>") == 1
     assert data.count("</video_data>") == 1
     assert "[tag removed]" in data
+
+
+def test_pause_point_past_the_transcribed_part_is_flagged():
+    data = build_context(make_input(transcript_until=120.0)).video_data
+    assert "still being transcribed" in data and "[02:00]" in data
+    assert "still being transcribed" not in build_context(make_input(transcript_until=200.0)).video_data
+    assert "still being transcribed" not in build_context(make_input()).video_data

@@ -237,3 +237,11 @@ def test_disconnect_with_failing_save_still_closes(conn, settings, seeded_video,
 
     next(stream)
     stream.close()  # must not raise
+
+
+def test_transcription_in_progress_is_passed_to_the_context(conn, fake_llm, settings, seeded_video, no_live_frames):
+    states = repo.get_video(conn, seeded_video).stage_states
+    repo.update_video(conn, seeded_video, transcribed_until=90.0, stage_states={**states, "transcript": "running"})
+    assert "still being transcribed" in user_content(prepare_messages(conn, fake_llm, settings, seeded_video, "Q", 110.0))
+    repo.update_video(conn, seeded_video, stage_states={**states, "transcript": "done"})
+    assert "still being transcribed" not in user_content(prepare_messages(conn, fake_llm, settings, seeded_video, "Q", 110.0))

@@ -8,7 +8,7 @@ from unstuck.models import Chat, Cue, FrameDescription, Keyframe, NewKeyframe, S
 _VIDEO_UPDATABLE = {
     "title", "channel", "duration", "status", "ask_ready", "stage_states",
     "visual_mode", "outline", "error_code", "error_message",
-    "part_title", "parts_total", "thumbnail",
+    "part_title", "parts_total", "thumbnail", "transcribed_until",
 }
 
 
@@ -35,6 +35,7 @@ def _video(row: sqlite3.Row) -> Video:
         part_title=row["part_title"],
         parts_total=row["parts_total"],
         thumbnail=row["thumbnail"],
+        transcribed_until=row["transcribed_until"],
     )
 
 

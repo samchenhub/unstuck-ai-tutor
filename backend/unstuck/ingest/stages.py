@@ -5,10 +5,13 @@ from unstuck.db import repo
 from unstuck.errors import IngestError
 from unstuck.ingest import files, indexer, keyframes, outline, timeline, transcribe, vision
 from unstuck.ingest.pipeline import SKIPPED, StageContext, StageFn
+from unstuck.models import Cue
 
 log = logging.getLogger(__name__)
 
 INFO_FILE = "info.json"
+FIRST_PUBLISH_S = 60.0  # local transcription: open asking once the first minute is transcribed...
+PUBLISH_EVERY_S = 300.0  # ...then refresh the stored transcript every five minutes of audio
 
 
 def _rebuild_timeline(ctx: StageContext) -> None:
@@ -39,22 +42,45 @@ def stage_metadata(ctx: StageContext) -> None:
     )
 
 
+def _publish_transcript(ctx: StageContext, cues: list[Cue], transcribed_until: float) -> None:
+    """Store the transcript so far with a transcript-only timeline + index, so the learner can ask right away;
+    the timeline/index stages rebuild it with visual information later."""
+    repo.replace_cues(ctx.conn, ctx.video_id, cues)
+    _rebuild_timeline(ctx)
+    indexer.build_index(ctx.conn, ctx.llm, ctx.video_id)
+    repo.update_video(ctx.conn, ctx.video_id, ask_ready=True, transcribed_until=transcribed_until)
+
+
 def stage_transcript(ctx: StageContext) -> None:
     src = _source(ctx)
     info = files.load_info(ctx.video_dir / INFO_FILE)
     cues = src.fetch_captions(info)
-    if not cues:
+    if cues:
+        _publish_transcript(ctx, cues, 0.0)
+        return
+    _transcribe_locally(ctx, src)
+
+
+def _transcribe_locally(ctx: StageContext, src) -> None:
+    """Whisper fallback, published as it goes: asking opens after the first minute instead of the whole video."""
+    start = repo.get_video(ctx.conn, ctx.video_id).transcribed_until
+    cues = [c for c in repo.get_cues(ctx.conn, ctx.video_id) if c.start < start] if start > 0 else []
+    if start > 0:
+        log.info("resuming transcription of %s at %.0fs", ctx.video_id, start)
+    else:
         log.info("no captions for %s, transcribing audio", ctx.video_id)
-        audio = src.download_audio(ctx.video_id, ctx.video_dir)
-        cues = transcribe.transcribe(audio, ctx.settings.whisper_model)
+    audio = src.download_audio(ctx.video_id, ctx.video_dir)
+    published = covered = start
+    for progress in transcribe.iter_transcript(audio, ctx.settings.whisper_model, start=start):
+        cues.extend(progress.cues)
+        covered = progress.covered_until
+        due = FIRST_PUBLISH_S if published == 0 else PUBLISH_EVERY_S
+        if cues and covered - published >= due:
+            _publish_transcript(ctx, cues, covered)
+            published = covered
     if not cues:
         raise IngestError("NO_TRANSCRIPT", "没有字幕，语音转写也没有得到内容")
-    repo.replace_cues(ctx.conn, ctx.video_id, cues)
-    # Transcript-only timeline + index so the learner can start asking right away;
-    # the timeline/index stages rebuild it with visual information later.
-    _rebuild_timeline(ctx)
-    indexer.build_index(ctx.conn, ctx.llm, ctx.video_id)
-    repo.update_video(ctx.conn, ctx.video_id, ask_ready=True)
+    _publish_transcript(ctx, cues, covered)
 
 
 def stage_download(ctx: StageContext) -> None:

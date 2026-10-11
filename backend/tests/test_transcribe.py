@@ -24,7 +24,7 @@ def tone_wav(tmp_path):
 @pytest.fixture
 def fake_audio(monkeypatch):
     audio = np.zeros(16000, dtype=np.float32)
-    monkeypatch.setattr(tr, "load_audio", lambda path, sample_rate=16000: audio)
+    monkeypatch.setattr(tr, "load_audio", lambda path, sample_rate=16000, **kw: audio)
     return audio
 
 
@@ -109,4 +109,46 @@ def test_other_languages_get_no_prompt(monkeypatch, tmp_path, fake_audio):
     assert isinstance(audio, np.ndarray)
     assert not kwargs.get("initial_prompt")
     assert kwargs["vad_filter"] is True
+    tr._model.cache_clear()
+
+
+def test_load_audio_reads_a_time_range(tone_wav):
+    audio = tr.load_audio(tone_wav, start=0.5, duration=0.25)
+    assert abs(len(audio) - 4000) < 400
+
+
+def test_iter_transcript_walks_chunks_with_absolute_times(monkeypatch, tmp_path):
+    """Chunks are decoded one at a time; cues are shifted by the chunk offset; a short chunk ends it."""
+    loads = []
+    lengths = {0.0: 10.0, 10.0: 10.0, 20.0: 4.0}
+
+    def fake_load(path, sample_rate=16000, *, start=0.0, duration=None):
+        loads.append((start, duration))
+        return np.zeros(int(lengths.get(start, 0.0) * 16000), dtype=np.float32)
+
+    monkeypatch.setattr(tr, "load_audio", fake_load)
+    calls = []
+    detect_kwargs = _install_fake_model(monkeypatch, "en", calls)
+    events = list(tr.iter_transcript(tmp_path / "a.m4a", "tiny", chunk_s=10.0))
+    assert loads == [(0.0, 10.0), (10.0, 10.0), (20.0, 10.0)]
+    assert [(c.start, c.end, c.text) for e in events for c in e.cues] == [
+        (0.0, 1.0, "hi"), (10.0, 11.0, "hi"), (20.0, 21.0, "hi"),
+    ]
+    assert [e.covered_until for e in events] == [1.0, 10.0, 11.0, 20.0, 21.0, 24.0]
+    assert len(detect_kwargs) == 1  # language detected once, then fixed for later chunks
+    assert all(kwargs["language"] == "en" for _audio, kwargs in calls)
+    tr._model.cache_clear()
+
+
+def test_iter_transcript_resumes_and_stops_past_the_end(monkeypatch, tmp_path):
+    loads = []
+
+    def fake_load(path, sample_rate=16000, *, start=0.0, duration=None):
+        loads.append(start)
+        return np.zeros(0, dtype=np.float32)
+
+    monkeypatch.setattr(tr, "load_audio", fake_load)
+    _install_fake_model(monkeypatch, "en", [])
+    assert list(tr.iter_transcript(tmp_path / "a.m4a", "tiny", start=1234.0)) == []
+    assert loads == [1234.0]
     tr._model.cache_clear()

@@ -43,6 +43,7 @@ class ContextInput:
     retrieved: list[Segment]
     history: list[Chat]
     visual_available: bool
+    transcript_until: float | None = None  # set while local transcription is still running
 
 
 @dataclass(frozen=True)
@@ -114,9 +115,17 @@ def _outline_block(outline: list[dict] | None, t: float) -> str:
     return "\n".join(lines)
 
 
-def _window_block(window: list[Segment], frames: list[Keyframe], t: float) -> str:
+def _window_block(
+    window: list[Segment], frames: list[Keyframe], t: float, transcript_until: float | None = None
+) -> str:
     lines = [f"## Transcript around the pause point (paused at [{fmt_ts(t)}])"]
-    if not window:
+    if transcript_until is not None and t > transcript_until:
+        lines.append(
+            f"(This video is still being transcribed: the transcript currently ends at [{fmt_ts(transcript_until)}], "
+            "so the speech at the pause point is not available yet. Rely on the current screen and mention briefly "
+            "that the transcript here is still being generated.)"
+        )
+    elif not window:
         lines.append("(no transcript here)")
     lines.extend(f"[{fmt_ts(s.start)}-{fmt_ts(s.end)}] {s.transcript}" for s in window)
     if frames:
@@ -150,7 +159,7 @@ def build_context(inp: ContextInput, budget: int = TOKEN_BUDGET) -> BuiltContext
     fixed = "\n\n".join(
         b for b in (
             _outline_block(inp.outline, inp.t),
-            _window_block(inp.window, frames, inp.t),
+            _window_block(inp.window, frames, inp.t, inp.transcript_until),
             _frame_block(inp.frame, inp.visual_available),
         ) if b
     )
