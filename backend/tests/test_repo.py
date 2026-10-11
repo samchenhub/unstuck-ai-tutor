@@ -139,3 +139,25 @@ def test_frame_cache(conn):
     repo.put_frame_cache(conn, VID, 12, "desc")
     repo.put_frame_cache(conn, VID, 12, "newer")
     assert repo.get_frame_cache(conn, VID, 12) == "newer"
+
+
+def test_a_python_without_sqlite_extensions_gets_a_clear_message(tmp_path, monkeypatch):
+    import sqlite3
+
+    import pytest
+
+    from unstuck import db
+
+    class NoExtensions:
+        """A connection from a Python built without loadable SQLite extensions (e.g. python.org macOS)."""
+
+        def __init__(self, *args, **kwargs):
+            self.row_factory = None
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr(db.sqlite3, "connect", lambda *a, **kw: NoExtensions())
+    with pytest.raises(RuntimeError, match="uv python install"):
+        db.connect(tmp_path / "x.db", 4)
+    assert sqlite3.connect  # the real module is untouched outside this test

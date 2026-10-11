@@ -357,3 +357,35 @@ def test_a_cut_off_whole_file_reply_is_not_trusted_past_the_last_full_chunk(tmp_
     dest = download_ranges(lambda: "A", tmp_path / "v.mp4", headers={}, chunk_size=CHUNK, workers=1,
                            opener=opener, sleep=lambda s: None)
     assert dest.read_bytes() == MANY
+
+
+def test_downloads_work_without_pwrite(tmp_path, monkeypatch):
+    """Windows has no os.pwrite: positioned writes fall back to seek + write under a lock."""
+    from unstuck.sources.bilibili import download
+
+    monkeypatch.setattr(download, "_HAS_PWRITE", False)
+    dest = download_ranges(lambda: ["m1", "m2"], tmp_path / "v.mp4", headers={}, chunk_size=CHUNK, workers=4,
+                           opener=mirror_opener(slow={"m1"}, data=MANY), sleep=lambda s: None)
+    assert dest.read_bytes() == MANY
+
+
+def test_the_final_rename_waits_out_a_reader_holding_the_file(tmp_path, monkeypatch):
+    """Windows refuses to rename a file ffmpeg is reading (streaming transcription): retry briefly."""
+    from pathlib import Path
+
+    from unstuck.sources.bilibili import download
+
+    real_replace = Path.replace
+    refusals = []
+
+    def replace(self, target):
+        if len(refusals) < 2:
+            refusals.append(1)
+            raise PermissionError(32, "The process cannot access the file because it is being used")
+        return real_replace(self, target)
+
+    monkeypatch.setattr(Path, "replace", replace)
+    monkeypatch.setattr(download.time, "sleep", lambda s: None)
+    dest = download_ranges(lambda: "A", tmp_path / "v.mp4", headers={}, chunk_size=CHUNK, opener=Opener(),
+                           sleep=lambda s: None)
+    assert dest.read_bytes() == DATA and len(refusals) == 2

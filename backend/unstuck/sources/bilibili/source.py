@@ -86,7 +86,10 @@ class BilibiliSource:
 
         path = download_ranges(mirrors, dest, headers=HEADERS, sleep=self._sleep)
         # Transcription is finished by the time the MP4 is fetched (download stage); drop its audio-only copy.
-        (out_dir / "audio.m4a").unlink(missing_ok=True)
+        try:
+            (out_dir / "audio.m4a").unlink(missing_ok=True)
+        except OSError:  # Windows: still open (e.g. a transcription reading it); harmless to keep
+            log.warning("could not remove the transcription audio of %s", video_id)
         return path
 
     def download_audio(self, video_id: str, out_dir: Path) -> Path:

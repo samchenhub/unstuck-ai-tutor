@@ -2427,7 +2427,7 @@ requires-dist = [
     { name = "sentence-transformers", specifier = ">=3.0" },
     { name = "sqlite-vec", specifier = ">=0.1.6" },
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.30" },
-    { name = "yt-dlp", specifier = ">=2025.1.1" },
+    { name = "yt-dlp", specifier = ">=2026.6.9" },
 ]
 
 [package.metadata.requires-dev]

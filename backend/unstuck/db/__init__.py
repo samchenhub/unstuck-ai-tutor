@@ -15,6 +15,12 @@ def connect(db_path: Path, embed_dim: int) -> sqlite3.Connection:
     """
     db_path.parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(db_path, timeout=30, check_same_thread=False)
+    if not hasattr(conn, "enable_load_extension"):
+        conn.close()
+        raise RuntimeError(
+            "这个 Python 不支持加载 SQLite 扩展（例如 python.org 的 macOS 安装包），Unstuck 需要它。"
+            "请在 backend 目录运行 `uv python install 3.12`，再运行 `uv sync` 后重试。"
+        )
     conn.row_factory = sqlite3.Row
     conn.enable_load_extension(True)
     sqlite_vec.load(conn)

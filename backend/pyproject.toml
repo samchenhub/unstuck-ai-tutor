@@ -9,7 +9,7 @@ dependencies = [
   "openai>=1.40",
   "python-dotenv>=1.0",
   "sqlite-vec>=0.1.6",
-  "yt-dlp>=2025.1.1",
+  "yt-dlp>=2026.6.9",
   "faster-whisper>=1.0",
   "imagehash>=4.3",
   "Pillow>=10.0",
@@ -26,6 +26,11 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["unstuck"]
+
+[tool.uv]
+# uv's own Python builds support loadable SQLite extensions (sqlite-vec); some system ones do not
+# (python.org's macOS installer, some Homebrew/CI builds).
+python-preference = "only-managed"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

@@ -59,12 +59,42 @@ def _fail() -> IngestError:
     return IngestError("DOWNLOAD_FAILED", "视频下载失败")
 
 
+_HAS_PWRITE = hasattr(os, "pwrite")  # Unix only; Windows seeks and writes under a lock instead
+_SEEK_LOCK = threading.Lock()
+
+
 def _write_at(fd: int, data: bytes, pos: int) -> None:
-    """`os.pwrite` may write less than asked; keep going until the whole buffer is on disk."""
+    """Write the whole buffer at `pos` (workers write different chunks of one file concurrently)."""
     view = memoryview(data)
-    while view:
-        written = os.pwrite(fd, view, pos)
-        view, pos = view[written:], pos + written
+    if _HAS_PWRITE:
+        while view:  # os.pwrite may write less than asked
+            written = os.pwrite(fd, view, pos)
+            view, pos = view[written:], pos + written
+        return
+    with _SEEK_LOCK:  # the file position is shared, so seek + write must not interleave
+        os.lseek(fd, pos, os.SEEK_SET)
+        while view:
+            view = view[os.write(fd, view):]
+
+
+def _replace(part: Path, dest: Path, attempts: int = 20) -> None:
+    """Rename the finished download. Windows refuses while another process (ffmpeg reading the partial audio
+    for streaming transcription) has the file open, so wait a moment and try again."""
+    for attempt in range(attempts):
+        try:
+            part.replace(dest)
+            return
+        except PermissionError:
+            if attempt == attempts - 1:
+                raise
+            time.sleep(0.25)
+
+
+def _discard(path: Path) -> None:
+    try:
+        path.unlink(missing_ok=True)
+    except OSError:  # still open elsewhere on Windows; a later download truncates it anyway
+        log.warning("could not remove %s", path)
 
 
 class _Download:
@@ -275,9 +305,9 @@ def download_ranges(
             starts = range(first, total, chunk_size)
             if starts:
                 _fetch_parallel(dl, starts, workers)
-        part.replace(dest)
+        _replace(part, dest)
     except BaseException:
-        part.unlink(missing_ok=True)
+        _discard(part)
         raise
     return dest
 
