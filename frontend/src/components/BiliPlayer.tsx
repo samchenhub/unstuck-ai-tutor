@@ -1,5 +1,6 @@
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useState } from 'react'
 import { api } from '../lib/api'
+import { refreshDelayMs } from '../lib/retry'
 import type { PlayerHandle } from './playerHandle'
 
 // An expired or broken stream URL fires `error`; fetch a fresh one and resume, but not forever.
@@ -10,6 +11,7 @@ export const BiliPlayer = forwardRef<PlayerHandle, { videoId: string }>(function
   const resumeAt = useRef<number | null>(null)
   const refreshes = useRef(0)
   const wasPlaying = useRef(false)
+  const retryTimer = useRef<number | undefined>(undefined)
   const [src, setSrc] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
 
@@ -31,6 +33,7 @@ export const BiliPlayer = forwardRef<PlayerHandle, { videoId: string }>(function
     refreshes.current = 0
     setSrc(null)
     void load(null)
+    return () => window.clearTimeout(retryTimer.current)
   }, [load])
 
   const onError = () => {
@@ -41,7 +44,10 @@ export const BiliPlayer = forwardRef<PlayerHandle, { videoId: string }>(function
     refreshes.current += 1
     // A pending resume means the last refresh hasn't loaded yet; currentTime is 0 after a src swap, so keep the saved one.
     if (resumeAt.current === null) wasPlaying.current = !(videoRef.current?.paused ?? true)
-    void load(resumeAt.current ?? videoRef.current?.currentTime ?? 0)
+    const resume = resumeAt.current ?? videoRef.current?.currentTime ?? 0
+    resumeAt.current = resume
+    window.clearTimeout(retryTimer.current)
+    retryTimer.current = window.setTimeout(() => void load(resume), refreshDelayMs(refreshes.current))
   }
 
   const onLoadedMetadata = () => {
