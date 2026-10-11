@@ -253,42 +253,72 @@ def test_short_pwrite_is_completed(tmp_path, monkeypatch):
     assert run.dest.read_bytes() == DATA
 
 
-def test_mirror_race_downloads_from_the_fastest_host(tmp_path):
-    """get_url may return mirrors of one file; a small probe picks the first that answers in full."""
-    import threading
+def mirror_opener(slow=(), broken=(), delay=0.02, data=DATA):
+    import time as _time
 
-    release = threading.Event()
     calls = []
 
     def opener(url, headers):
         calls.append((url, headers["Range"]))
-        if url == "slow":
-            release.wait(5)
-        if url == "broken":
-            return 403, b"", None
-        start, end = parse_range(headers)
-        return 206, DATA[start:end + 1], len(DATA)
-
-    dest = download_ranges(lambda: ["slow", "broken", "fast"], tmp_path / "v.mp4", headers={},
-                           chunk_size=CHUNK, opener=opener, sleep=lambda s: None)
-    release.set()
-    assert dest.read_bytes() == DATA
-    downloads = [url for url, rng in calls if rng != "bytes=0-524287"]
-    assert downloads and set(downloads) == {"fast"}
-    assert {url for url, rng in calls if rng == "bytes=0-524287"} >= {"broken", "fast"}
-
-
-def test_mirror_race_falls_back_to_the_first_when_all_probes_fail(tmp_path):
-    calls = []
-
-    def opener(url, headers):
-        calls.append((url, headers["Range"]))
-        if headers["Range"] == "bytes=0-524287":
+        if url in broken:
             return 503, b"", None
+        if url in slow:
+            _time.sleep(delay)
         start, end = parse_range(headers)
-        return 206, DATA[start:end + 1], len(DATA)
+        return 206, data[start:end + 1], len(data)
 
-    dest = download_ranges(lambda: ["m1", "m2"], tmp_path / "v.mp4", headers={},
-                           chunk_size=CHUNK, opener=opener, sleep=lambda s: None)
+    opener.calls = calls
+    return opener
+
+
+MANY = bytes(range(256)) * 80  # 20 chunks of 1024
+
+
+def test_all_mirrors_download_at_once_and_the_fast_one_takes_more(tmp_path):
+    opener = mirror_opener(slow={"slow"}, data=MANY)
+    dest = download_ranges(lambda: ["slow", "fast"], tmp_path / "v.mp4", headers={}, chunk_size=CHUNK,
+                           workers=2, opener=opener, sleep=lambda s: None)
+    assert dest.read_bytes() == MANY
+    used = [url for url, _r in opener.calls]
+    assert used.count("fast") > used.count("slow") >= 1
+
+
+def test_a_failing_mirror_is_set_aside_without_refreshing(tmp_path):
+    refreshes = []
+
+    def get_url():
+        refreshes.append(1)
+        return ["bad", "good"]
+
+    opener = mirror_opener(broken={"bad"}, data=MANY)
+    dest = download_ranges(get_url, tmp_path / "v.mp4", headers={}, chunk_size=CHUNK, workers=2,
+                           opener=opener, sleep=lambda s: None)
+    assert dest.read_bytes() == MANY
+    assert len(refreshes) == 1
+    assert sum(1 for url, _r in opener.calls if url == "bad") <= 4  # chunk-0 race + 3 strikes
+
+
+def test_all_mirrors_failing_refreshes_the_list(tmp_path):
+    lists = iter([["b1", "b2"], ["good"]])
+    opener = mirror_opener(broken={"b1", "b2"})
+    dest = download_ranges(lambda: next(lists), tmp_path / "v.mp4", headers={}, chunk_size=CHUNK,
+                           workers=1, opener=opener, sleep=lambda s: None)
     assert dest.read_bytes() == DATA
-    assert {url for url, rng in calls if rng != "bytes=0-524287"} == {"m1"}
+    assert opener.calls[-1][0] == "good"
+
+
+def test_progress_reports_the_contiguous_prefix(tmp_path):
+    seen = []
+    download_ranges(lambda: "A", tmp_path / "v.mp4", headers={}, chunk_size=CHUNK, workers=1,
+                    opener=Opener(), sleep=lambda s: None, on_progress=lambda done, total: seen.append((done, total)))
+    assert seen == [(1024, 2560), (2048, 2560), (2560, 2560)]
+
+
+def test_progress_waits_for_gaps(tmp_path):
+    """A later chunk finishing first must not advance the prefix past a missing one."""
+    seen = []
+    download_ranges(lambda: ["m1", "m2"], tmp_path / "v.mp4", headers={}, chunk_size=CHUNK, workers=4,
+                    opener=mirror_opener(slow={"m1"}, data=MANY), sleep=lambda s: None,
+                    on_progress=lambda done, total: seen.append(done))
+    assert seen == sorted(seen) and seen[-1] == len(MANY)
+    assert all(done % CHUNK == 0 or done == len(MANY) for done in seen)
