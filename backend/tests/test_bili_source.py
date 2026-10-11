@@ -156,3 +156,46 @@ def test_video_download_removes_the_transcription_audio(monkeypatch, tmp_path):
     (out / "audio.m4a").write_bytes(b"audiodata")
     assert source(base_routes(GOOD_SUB)).download_video(f"{BV}_p2", out) == out / "video.mp4"
     assert not (out / "audio.m4a").exists()  # transcription is done by the time the MP4 is downloaded
+
+
+def test_open_audio_streams_the_dash_download(monkeypatch, tmp_path):
+    fake_cdn(monkeypatch, {"a-64.m4s": b"audiodata" * 1000})
+    src = source({"fnval=16": [DASH], **base_routes(GOOD_SUB)})
+    out = tmp_path / "vid"
+    feed = src.open_audio(f"{BV}_p2", out, duration=50.0)
+    feed.wait_for(float("inf"))
+    assert feed.is_complete and feed.path() == out / "audio.m4a"
+    assert (out / "audio.m4a").read_bytes() == b"audiodata" * 1000
+
+
+def test_open_audio_falls_back_to_the_mp4_if_the_stream_fails(monkeypatch, tmp_path):
+    def opener(url, headers):
+        if "a-64.m4s" in url or "akamaized" in url:
+            return 503, b"", None
+        start = int(headers["Range"].removeprefix("bytes=").split("-")[0])
+        return 206, b"mp4data"[start:], 7
+
+    monkeypatch.setattr("unstuck.sources.bilibili.download._open_range", opener)
+    src = source({"fnval=16": [DASH], **base_routes(GOOD_SUB)})
+    out = tmp_path / "vid"
+    feed = src.open_audio(f"{BV}_p2", out, duration=50.0)
+    feed.wait_for(float("inf"))
+    assert feed.path() == out / "video.mp4"
+
+
+def test_open_audio_reuses_a_finished_file(monkeypatch, tmp_path):
+    seen = fake_cdn(monkeypatch, {})
+    out = tmp_path / "vid"
+    out.mkdir()
+    (out / "audio.m4a").write_bytes(b"audiodata")
+    feed = source(base_routes(GOOD_SUB)).open_audio(f"{BV}_p2", out, duration=50.0)
+    assert feed.is_complete and feed.path() == out / "audio.m4a" and seen == []
+
+
+def test_youtube_open_audio_wraps_the_finished_download(monkeypatch, tmp_path):
+    from unstuck.ingest import youtube as yt
+    from unstuck.sources.youtube import YouTubeSource
+
+    monkeypatch.setattr(yt, "download_audio", lambda video_id, out_dir: out_dir / "audio.webm")
+    feed = YouTubeSource().open_audio("dQw4w9WgXcQ", tmp_path, duration=10.0)
+    assert feed.is_complete and feed.path() == tmp_path / "audio.webm"

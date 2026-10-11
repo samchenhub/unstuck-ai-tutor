@@ -133,7 +133,7 @@ def test_iter_transcript_walks_chunks_with_absolute_times(monkeypatch, tmp_path)
     monkeypatch.setattr(tr, "load_audio", fake_load)
     calls = []
     detect_kwargs = _install_fake_model(monkeypatch, "en", calls)
-    events = list(tr.iter_transcript(tmp_path / "a.m4a", "tiny", chunk_s=10.0))
+    events = list(tr.iter_transcript(tmp_path / "a.m4a", "tiny", chunk_s=10.0, first_chunk_s=10.0))
     assert loads == [(0.0, 10.0), (10.0, 10.0), (20.0, 10.0)]
     assert [(c.start, c.end, c.text) for e in events for c in e.cues] == [
         (0.0, 1.0, "hi"), (10.0, 11.0, "hi"), (20.0, 21.0, "hi"),
@@ -181,9 +181,61 @@ def test_language_is_fixed_only_once_detection_is_confident(monkeypatch, tmp_pat
 
     monkeypatch.setitem(sys.modules, "faster_whisper", SimpleNamespace(WhisperModel=FakeModel))
     tr._model.cache_clear()
-    list(tr.iter_transcript(tmp_path / "a.m4a", "tiny", chunk_s=10.0))
+    list(tr.iter_transcript(tmp_path / "a.m4a", "tiny", chunk_s=10.0, first_chunk_s=10.0))
     assert len(detect_calls) == 2
     assert "language" not in calls[0]  # unsure: let Whisper decide for this chunk only
     assert calls[1]["language"] == calls[2]["language"] == "zh"
     assert "简体中文" in calls[2]["initial_prompt"]
+    tr._model.cache_clear()
+
+
+def test_first_chunk_is_short_so_asking_opens_sooner(monkeypatch, tmp_path):
+    loads = []
+
+    def fake_load(path, sample_rate=16000, *, start=0.0, duration=None):
+        loads.append((start, duration))
+        return np.zeros(int((5.0 if start else duration) * 16000), dtype=np.float32)
+
+    monkeypatch.setattr(tr, "load_audio", fake_load)
+    _install_fake_model(monkeypatch, "en", [])
+    list(tr.iter_transcript(tmp_path / "a.m4a", "tiny"))
+    assert loads == [(0.0, 120.0), (120.0, 600.0)]
+    tr._model.cache_clear()
+
+
+def test_transcription_follows_a_download_in_progress(monkeypatch, tmp_path):
+    """Each chunk is decoded only once it is on disk; a short decode before the end means 'not there yet'."""
+    import threading
+    import time
+
+    from unstuck.sources.base import AudioFeed
+
+    feed = AudioFeed(tmp_path / "a.m4a", duration=40.0)
+    total = 1_000_000
+    loads = []
+
+    def fake_load(path, sample_rate=16000, *, start=0.0, duration=None):
+        readable = feed.readable_seconds()
+        loads.append((start, duration, readable, path.name))
+        have = min(duration, max(0.0, readable - start)) if readable != float("inf") else min(duration, 40.0 - start)
+        if start == 10.0 and len([x for x in loads if x[0] == 10.0]) == 1:
+            have = 3.0  # the estimate was optimistic: the file ends early for now
+        return np.zeros(int(have * 16000), dtype=np.float32)
+
+    monkeypatch.setattr(tr, "load_audio", fake_load)
+    _install_fake_model(monkeypatch, "en", [])
+
+    def producer():
+        for step in range(1, 11):
+            time.sleep(0.01)
+            feed.progress(AudioFeed.SAFETY_BYTES + step * (total - AudioFeed.SAFETY_BYTES) // 10, total)
+        (tmp_path / "a.m4a").write_bytes(b"done")
+        feed.finish()
+
+    threading.Thread(target=producer).start()
+    events = list(tr.iter_transcript(feed, "tiny", chunk_s=10.0, first_chunk_s=10.0))
+    for start, duration, readable, _name in loads:
+        assert readable >= start + duration or readable == float("inf") or (start, duration) == (10.0, 10.0)
+    assert [x[0] for x in loads].count(10.0) == 2  # the short decode was retried after more data arrived
+    assert events[-1].covered_until == 40.0
     tr._model.cache_clear()

@@ -67,13 +67,14 @@ def stage_transcript(ctx: StageContext) -> None:
 
 def _transcribe_locally(ctx: StageContext, src) -> None:
     """Whisper fallback, published as it goes: asking opens after the first minute instead of the whole video."""
-    start = repo.get_video(ctx.conn, ctx.video_id).transcribed_until
+    video = repo.get_video(ctx.conn, ctx.video_id)
+    start = video.transcribed_until
     cues = [c for c in repo.get_cues(ctx.conn, ctx.video_id) if c.start < start] if start > 0 else []
     if start > 0:
         log.info("resuming transcription of %s at %.0fs", ctx.video_id, start)
     else:
         log.info("no captions for %s, transcribing audio", ctx.video_id)
-    audio = src.download_audio(ctx.video_id, ctx.video_dir)
+    audio = src.open_audio(ctx.video_id, ctx.video_dir, video.duration)  # may still be downloading
     published = covered = start
     embeddings: dict[str, list[float]] = {}
     for progress in transcribe.iter_transcript(audio, ctx.settings.whisper_model, start=start):

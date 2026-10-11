@@ -2,7 +2,7 @@ from pathlib import Path
 
 from unstuck.ingest import youtube as yt
 from unstuck.models import Cue
-from unstuck.sources.base import Part, Playback, VideoMeta, VideoRef
+from unstuck.sources.base import AudioFeed, Part, Playback, VideoMeta, VideoRef
 
 NAME = "youtube"
 
@@ -32,6 +32,10 @@ class YouTubeSource:
 
     def download_audio(self, video_id: str, out_dir: Path) -> Path:
         return yt.download_audio(video_id, out_dir)
+
+    def open_audio(self, video_id: str, out_dir: Path, duration: float) -> AudioFeed:
+        # yt-dlp downloads the (small) audio-only stream quickly; transcription starts once it is done.
+        return AudioFeed.complete(self.download_audio(video_id, out_dir))
 
     def playback(self, video_id: str, quality: int = 720) -> Playback:
         return Playback(kind="youtube")

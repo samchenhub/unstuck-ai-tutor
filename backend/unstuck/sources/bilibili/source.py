@@ -1,12 +1,14 @@
 import functools
 import logging
+import math
+import threading
 import time
 from pathlib import Path
 
 from unstuck.config import Settings
 from unstuck.errors import IngestError
 from unstuck.models import Cue
-from unstuck.sources.base import Part, Playback, VideoMeta
+from unstuck.sources.base import AudioFeed, Part, Playback, VideoMeta
 from unstuck.sources.bilibili import parse
 from unstuck.sources.bilibili.client import HEADERS, BiliClient
 from unstuck.sources.bilibili.download import download_ranges
@@ -14,6 +16,20 @@ from unstuck.sources.bilibili.download import download_ranges
 log = logging.getLogger(__name__)
 
 NAME = "bilibili"
+
+
+# Background audio downloads by destination, so a retried transcript stage joins the one still running.
+_active: dict[Path, AudioFeed] = {}
+_active_lock = threading.Lock()
+
+
+def _settle(dest: Path, feed: AudioFeed, *, path: Path | None = None, error: BaseException | None = None) -> None:
+    with _active_lock:
+        _active.pop(dest, None)
+    if error is not None:
+        feed.fail(error)
+    else:
+        feed.finish(path)
 
 
 @functools.lru_cache(maxsize=4)
@@ -72,29 +88,60 @@ class BilibiliSource:
         return path
 
     def download_audio(self, video_id: str, out_dir: Path) -> Path:
-        """Only the DASH audio track (about a quarter of the MP4), so transcription starts sooner; the MP4 for
-        keyframes is downloaded later. An already downloaded MP4 is reused (it carries the AAC track)."""
-        video = out_dir / "video.mp4"
-        if video.is_file() and video.stat().st_size > 0:
-            return video
+        feed = self.open_audio(video_id, out_dir, 0.0)
+        feed.wait_for(math.inf)
+        return feed.path()
+
+    def open_audio(self, video_id: str, out_dir: Path, duration: float) -> AudioFeed:
+        """Download only the DASH audio track (about a quarter of the MP4) in the background and hand it to
+        transcription while it arrives; the MP4 for keyframes comes later. An existing MP4 or audio file is
+        reused; any DASH problem falls back to the MP4 (slower, but proven)."""
+        for name in ("video.mp4", "audio.m4a"):
+            path = out_dir / name
+            if path.is_file() and path.stat().st_size > 0:
+                return AudioFeed.complete(path)
         dest = out_dir / "audio.m4a"
-        if dest.is_file() and dest.stat().st_size > 0:
-            return dest
-        info = self.fetch_info(video_id)
-
-        def audio_urls() -> list[str]:
-            urls = parse.dash_audio_urls(self.client.playurl_dash(info["bvid"], info["cid"]))
-            if not urls:
-                raise IngestError("PLAYBACK_UNAVAILABLE", "B站没有返回音频地址")
-            return urls
-
+        with _active_lock:
+            if (active := _active.get(dest)) is not None:
+                return active  # a retried stage joins the download that is still running
+            feed = _active[dest] = AudioFeed(dest, duration)
         try:
-            urls = iter([audio_urls()])  # the downloader asks for URLs up front and again after repeated failures
-            return download_ranges(lambda: next(urls, None) or audio_urls(), dest, headers=HEADERS, sleep=self._sleep)
-        except IngestError as exc:
-            # The MP4 route is slower but proven; any DASH problem (none offered, lookup or download failed) uses it.
-            log.warning("DASH audio failed for %s (%s), downloading the MP4 instead", video_id, exc.code)
-            return self.download_video(video_id, out_dir)
+            info = self.fetch_info(video_id)
+
+            def audio_urls() -> list[str]:
+                urls = parse.dash_audio_urls(self.client.playurl_dash(info["bvid"], info["cid"]))
+                if not urls:
+                    raise IngestError("PLAYBACK_UNAVAILABLE", "B站没有返回音频地址")
+                return urls
+
+            first = audio_urls()
+        except BaseException as exc:
+            threading.Thread(target=self._mp4_instead, args=(video_id, out_dir, feed, exc), daemon=True).start()
+            return feed
+
+        def run() -> None:
+            urls = iter([first])  # the downloader asks for URLs up front and again after repeated failures
+            try:
+                download_ranges(lambda: next(urls, None) or audio_urls(), dest, headers=HEADERS,
+                                sleep=self._sleep, on_progress=feed.progress)
+            except Exception as exc:
+                self._mp4_instead(video_id, out_dir, feed, exc)
+                return
+            _settle(dest, feed)
+
+        threading.Thread(target=run, name=f"audio-{video_id}", daemon=True).start()
+        return feed
+
+    def _mp4_instead(self, video_id: str, out_dir: Path, feed: AudioFeed, exc: BaseException) -> None:
+        log.warning("DASH audio failed for %s (%s), downloading the MP4 instead", video_id,
+                    getattr(exc, "code", type(exc).__name__))
+        feed.reset()
+        try:
+            path = self.download_video(video_id, out_dir)
+        except Exception as mp4_exc:
+            _settle(out_dir / "audio.m4a", feed, error=mp4_exc)
+            return
+        _settle(out_dir / "audio.m4a", feed, path=path)
 
     def playback(self, video_id: str, quality: int = 720) -> Playback:
         info = self.fetch_info(video_id)

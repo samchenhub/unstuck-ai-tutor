@@ -1,3 +1,4 @@
+import math
 import subprocess
 from collections.abc import Iterator
 from dataclasses import dataclass
@@ -7,11 +8,13 @@ from pathlib import Path
 import numpy as np
 
 from unstuck.models import Cue
+from unstuck.sources.base import AudioFeed
 
 _SIMPLIFIED_PROMPT = "以下是普通话的句子，请使用简体中文。"
 SAMPLE_RATE = 16000
-CHUNK_S = 600.0
-MIN_LANGUAGE_PROBABILITY = 0.5  # silence/noise is detected as English at ~0.39; don't lock that in  # decode 10 minutes at a time: bounded memory, and progress can be published as it goes
+CHUNK_S = 600.0  # decode 10 minutes at a time: bounded memory, and progress can be published as it goes
+FIRST_CHUNK_S = 120.0  # ...but start with 2 minutes, so the first minute is published (and asking opens) sooner
+MIN_LANGUAGE_PROBABILITY = 0.5  # silence/noise is detected as English at ~0.39; don't lock that in
 
 
 @dataclass(frozen=True)
@@ -74,33 +77,52 @@ def _options(model, audio: np.ndarray) -> tuple[dict, bool]:
 
 
 def iter_transcript(
-    audio_path: Path, model_name: str, *, start: float = 0.0, chunk_s: float = CHUNK_S
+    audio: Path | AudioFeed,
+    model_name: str,
+    *,
+    start: float = 0.0,
+    chunk_s: float = CHUNK_S,
+    first_chunk_s: float = FIRST_CHUNK_S,
 ) -> Iterator[TranscriptProgress]:
     """Speech-to-text for videos without captions (local CPU), yielding cues as Whisper produces them.
 
-    One event per transcribed segment and one at the end of each chunk; starts at `start` to resume.
+    `audio` may still be downloading (an AudioFeed): each chunk is decoded once it is on disk. One event per
+    transcribed segment and one at the end of each chunk; starts at `start` to resume.
     """
+    feed = audio if isinstance(audio, AudioFeed) else AudioFeed.complete(audio)
     model = _model(model_name)
     options: dict | None = None
     offset = start
+    size = first_chunk_s
     while True:
-        audio = load_audio(audio_path, start=offset, duration=chunk_s)
-        seconds = len(audio) / SAMPLE_RATE
+        feed.wait_for(offset + size)
+        complete = feed.is_complete  # read before decoding: a decode that races the download's end is retried
+        try:
+            samples = load_audio(feed.path(), start=offset, duration=size)
+        except RuntimeError:
+            if complete:
+                raise
+            feed.wait_for(math.inf)  # e.g. the download fell back to another file; decode again once it is done
+            continue
+        seconds = len(samples) / SAMPLE_RATE
+        if seconds < size - 1 and not complete:
+            feed.wait_for_more()  # the estimate ran ahead of the bytes on disk; not the real end of the audio
+            continue
         if seconds < 0.5:  # past the end of the audio
             return
         chunk_options = options
         if chunk_options is None:
-            chunk_options, confident = _options(model, audio)
+            chunk_options, confident = _options(model, samples)
             if confident:
                 options = chunk_options
-        segments, _info = model.transcribe(audio, **chunk_options)
+        segments, _info = model.transcribe(samples, **chunk_options)
         for segment in segments:  # a lazy generator: segments arrive while Whisper works through the chunk
             text = segment.text.strip()
             if text:
                 yield TranscriptProgress([Cue(offset + segment.start, offset + segment.end, text)], offset + segment.end)
-        del audio
+        del samples
         yield TranscriptProgress([], offset + seconds)
-        if seconds < chunk_s - 1:  # a short chunk is the last one
+        if seconds < size - 1:  # a short chunk of a complete file is the last one
             return
-        offset += chunk_s
-
+        offset += size
+        size = chunk_s
