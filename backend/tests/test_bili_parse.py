@@ -161,3 +161,14 @@ def test_parts_from_view():
         Part(part=1, title="导数的概念", duration=1272.0, video_id=f"{BV}_p1"),
         Part(part=2, title="求导法则", duration=228.0, video_id=f"{BV}_p2"),
     ]
+
+
+def test_dash_audio_url_picks_the_smallest_track():
+    data = {"dash": {"audio": [
+        {"id": 30280, "bandwidth": 190000, "baseUrl": "https://upos.bilivideo.com/a-192.m4s"},
+        {"id": 30216, "bandwidth": 66000, "base_url": "http://upos.bilivideo.com/a-64.m4s"},
+        {"id": 30232, "bandwidth": 130000, "baseUrl": "https://upos.bilivideo.com/a-132.m4s"},
+    ]}}
+    assert parse.dash_audio_url(data) == "https://upos.bilivideo.com/a-64.m4s"
+    assert parse.dash_audio_url({"durl": [{"url": "x"}]}) is None
+    assert parse.dash_audio_url({"dash": {"audio": None}}) is None

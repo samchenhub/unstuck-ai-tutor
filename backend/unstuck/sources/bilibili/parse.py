@@ -171,6 +171,15 @@ def mp4_playback(data: dict, duration: float, now: float) -> Playback:
     return Playback(kind="mp4", url=url, expires_at=expires_at, duration=duration)
 
 
+def dash_audio_url(data: dict) -> str | None:
+    """The smallest DASH audio track: plenty for speech-to-text (a 1 h 45 min lecture is ~52 MB vs ~216 MB MP4)."""
+    tracks = [a for a in ((data.get("dash") or {}).get("audio") or []) if a.get("baseUrl") or a.get("base_url")]
+    if not tracks:
+        return None
+    track = min(tracks, key=lambda a: a.get("bandwidth") or 0)
+    return _https(track.get("baseUrl") or track["base_url"])
+
+
 def parts_from_view(view: dict, bvid: str) -> list[Part]:
     return [
         Part(part=p["page"], title=p.get("part") or "", duration=float(p.get("duration") or 0),

@@ -56,7 +56,59 @@ def test_playback_and_parts():
     assert [p.video_id for p in src.parts(f"{BV}_p2")] == [f"{BV}_p1", f"{BV}_p2"]
 
 
-def test_audio_and_video_share_one_mp4_download(monkeypatch, tmp_path):
+DASH = {"code": 0, "data": {"dash": {"audio": [
+    {"id": 30280, "bandwidth": 190000, "baseUrl": "https://upos.bilivideo.com/a-192.m4s"},
+    {"id": 30216, "bandwidth": 66000, "baseUrl": "https://upos.bilivideo.com/a-64.m4s"},
+]}}}
+
+
+def fake_cdn(monkeypatch, files):
+    seen = []
+
+    def opener(url, headers):
+        seen.append((url, headers))
+        body = next(data for name, data in files.items() if name in url)
+        start = int(headers["Range"].removeprefix("bytes=").split("-")[0])
+        return 206, body[start:], len(body)
+
+    monkeypatch.setattr("unstuck.sources.bilibili.download._open_range", opener)
+    return seen
+
+
+def test_audio_downloads_only_the_smallest_dash_track(monkeypatch, tmp_path):
+    seen = fake_cdn(monkeypatch, {"a-64.m4s": b"audiodata", "v.mp4": b"mp4data"})
+    routes = base_routes(GOOD_SUB)
+    src = source({"fnval=16": [DASH], **routes})
+    out = tmp_path / "vid"
+    assert src.download_audio(f"{BV}_p2", out) == out / "audio.m4a"
+    assert (out / "audio.m4a").read_bytes() == b"audiodata"
+    assert {url for url, _h in seen} == {"https://upos.bilivideo.com/a-64.m4s"}
+    assert seen[0][1]["Referer"] == "https://www.bilibili.com/"  # DASH streams check the Referer
+    n = len(seen)
+    assert src.download_audio(f"{BV}_p2", out) == out / "audio.m4a"
+    assert len(seen) == n  # reused
+    assert src.download_video(f"{BV}_p2", out) == out / "video.mp4"  # the MP4 is separate (keyframes)
+    assert (out / "video.mp4").read_bytes() == b"mp4data"
+
+
+def test_audio_falls_back_to_the_mp4_without_dash(monkeypatch, tmp_path):
+    seen = fake_cdn(monkeypatch, {"v.mp4": b"mp4data"})
+    src = source({"fnval=16": [{"code": 0, "data": {"durl": [{"url": "x"}]}}], **base_routes(GOOD_SUB)})
+    out = tmp_path / "vid"
+    assert src.download_audio(f"{BV}_p2", out) == out / "video.mp4"
+    assert seen
+
+
+def test_audio_reuses_an_existing_mp4(monkeypatch, tmp_path):
+    seen = fake_cdn(monkeypatch, {})
+    out = tmp_path / "vid"
+    out.mkdir()
+    (out / "video.mp4").write_bytes(b"mp4data")
+    assert source(base_routes(GOOD_SUB)).download_audio(f"{BV}_p2", out) == out / "video.mp4"
+    assert seen == []
+
+
+def test_video_download_reuses_the_file(monkeypatch, tmp_path):
     seen = []
 
     def opener(url, headers):
@@ -67,7 +119,7 @@ def test_audio_and_video_share_one_mp4_download(monkeypatch, tmp_path):
     monkeypatch.setattr("unstuck.sources.bilibili.download._open_range", opener)
     src = source(base_routes(GOOD_SUB))
     out = tmp_path / "vid"
-    assert src.download_audio(f"{BV}_p2", out) == out / "video.mp4"
+    assert src.download_video(f"{BV}_p2", out) == out / "video.mp4"
     assert (out / "video.mp4").read_bytes() == b"mp4data"
     n = len(seen)
     assert n >= 1

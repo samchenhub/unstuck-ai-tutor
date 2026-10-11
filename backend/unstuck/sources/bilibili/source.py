@@ -4,6 +4,7 @@ import time
 from pathlib import Path
 
 from unstuck.config import Settings
+from unstuck.errors import IngestError
 from unstuck.models import Cue
 from unstuck.sources.base import Part, Playback, VideoMeta
 from unstuck.sources.bilibili import parse
@@ -63,9 +64,31 @@ class BilibiliSource:
         return download_ranges(lambda: self.playback(video_id).url, dest, headers=HEADERS)
 
     def download_audio(self, video_id: str, out_dir: Path) -> Path:
-        # The MP4 carries the AAC track and transcription decodes it with ffmpeg, so one download serves
-        # both Whisper and keyframes.
-        return self.download_video(video_id, out_dir)
+        """Only the DASH audio track (about a quarter of the MP4), so transcription starts sooner; the MP4 for
+        keyframes is downloaded later. An already downloaded MP4 is reused (it carries the AAC track)."""
+        video = out_dir / "video.mp4"
+        if video.is_file() and video.stat().st_size > 0:
+            return video
+        dest = out_dir / "audio.m4a"
+        if dest.is_file() and dest.stat().st_size > 0:
+            return dest
+        info = self.fetch_info(video_id)
+
+        def audio_url() -> str:
+            url = parse.dash_audio_url(self.client.playurl_dash(info["bvid"], info["cid"]))
+            if url is None:
+                raise IngestError("PLAYBACK_UNAVAILABLE", "B站没有返回音频地址")
+            return url
+
+        try:
+            first = audio_url()
+        except IngestError as exc:
+            if exc.code != "PLAYBACK_UNAVAILABLE":
+                raise
+            log.info("no DASH audio for %s, downloading the MP4 instead", video_id)
+            return self.download_video(video_id, out_dir)
+        urls = iter([first])  # the downloader asks for a URL up front and again after repeated failures
+        return download_ranges(lambda: next(urls, None) or audio_url(), dest, headers=HEADERS)
 
     def playback(self, video_id: str, quality: int = 720) -> Playback:
         info = self.fetch_info(video_id)

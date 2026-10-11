@@ -178,5 +178,9 @@ class BiliClient:
         params = {"bvid": bvid, "cid": cid, "qn": 64, "fnval": 1, "platform": "html5", "high_quality": 1}
         return self._signed("/x/player/wbi/playurl", params)
 
+    def playurl_dash(self, bvid: str, cid: int) -> dict:
+        """DASH streams (separate audio/video; the CDN requires the bilibili Referer)."""
+        return self._signed("/x/player/wbi/playurl", {"bvid": bvid, "cid": cid, "qn": 64, "fnval": 16, "fourk": 0})
+
     def subtitle(self, url: str) -> dict:
         return self.get(url)
