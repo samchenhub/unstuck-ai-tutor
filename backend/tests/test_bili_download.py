@@ -246,9 +246,20 @@ def test_get_url_always_failing_is_bounded_and_reports_download_failed(tmp_path)
     assert not dest.exists()
 
 
+@pytest.mark.skipif(not hasattr(os, "pwrite"), reason="os.pwrite is Unix-only")
 def test_short_pwrite_is_completed(tmp_path, monkeypatch):
     real = os.pwrite
     monkeypatch.setattr(os, "pwrite", lambda fd, data, pos: real(fd, bytes(data)[:100], pos))
+    run(Opener(), tmp_path)
+    assert run.dest.read_bytes() == DATA
+
+
+def test_short_write_without_pwrite_is_completed(tmp_path, monkeypatch):
+    from unstuck.sources.bilibili import download
+
+    real = os.write
+    monkeypatch.setattr(download, "_HAS_PWRITE", False)
+    monkeypatch.setattr(download.os, "write", lambda fd, data: real(fd, bytes(data)[:100]))
     run(Opener(), tmp_path)
     assert run.dest.read_bytes() == DATA
 
