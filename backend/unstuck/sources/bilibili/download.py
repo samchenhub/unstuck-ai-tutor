@@ -8,11 +8,14 @@ This downloader keeps partial bytes, resumes from the current offset, and fetche
 
 import http.client
 import logging
+import os
 import re
+import threading
 import time
 import urllib.error
 import urllib.request
 from collections.abc import Callable
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
 from unstuck.errors import IngestError
@@ -52,6 +55,67 @@ def _fail() -> IngestError:
     return IngestError("DOWNLOAD_FAILED", "视频下载失败")
 
 
+class _Download:
+    """State shared by the chunk workers: current URL (refreshed at most once per failure), total size, output fd."""
+
+    def __init__(self, get_url, fd, headers, chunk_size, attempts_per_url, max_refreshes, opener, sleep):
+        self.get_url, self.fd, self.headers, self.chunk_size = get_url, fd, headers, chunk_size
+        self.attempts_per_url, self.max_refreshes, self.opener, self.sleep = attempts_per_url, max_refreshes, opener, sleep
+        self.lock = threading.Lock()
+        self.abort = threading.Event()
+        self.refreshes = 0
+        self.total: int | None = None
+        self.url = get_url()
+
+    def refresh(self, failed_url: str) -> str:
+        """Replace the URL a worker failed on; if another worker already did, just adopt the new one."""
+        with self.lock:
+            if self.url == failed_url:
+                self.refreshes += 1
+                if self.refreshes > self.max_refreshes:
+                    raise _fail()
+                self.url = self.get_url()
+            return self.url
+
+    def chunk(self, start: int) -> int:
+        """Fetch bytes [start, start + chunk_size) into the file, resuming after partial reads; returns end offset."""
+        pos, failures = start, 0
+        url = self.url
+        while not self.abort.is_set():
+            total = self.total
+            end = start + self.chunk_size if total is None else min(start + self.chunk_size, total)
+            if pos >= end:
+                return pos
+            request_headers = {**self.headers, "Range": f"bytes={pos}-{start + self.chunk_size - 1}"}
+            try:
+                status, body, size = self.opener(url, request_headers)
+            except _FAILURES as exc:
+                log.warning("bilibili download error at byte %d: %s", pos, exc)
+                status, body, size = 0, b"", None
+            if status == 403:
+                url, failures = self.refresh(url), 0
+                continue
+            # A 200 means the server ignored Range and sent the whole file: only usable for the very first request.
+            if status < 400 and body and not (status == 200 and pos):
+                if status != 200:
+                    body = body[:start + self.chunk_size - pos]
+                os.pwrite(self.fd, body, pos)
+                pos += len(body)
+                failures = 0
+                if size is not None:
+                    self.total = size
+                elif status == 200:
+                    self.total = pos
+                continue
+            failures += 1
+            log.warning("bilibili download failure %d at byte %d (status %s)", failures, pos, status)
+            if failures >= self.attempts_per_url:
+                url, failures = self.refresh(url), 0
+            else:
+                self.sleep(min(2 ** failures, 8))
+        return pos
+
+
 def download_ranges(
     get_url: Callable[[], str],
     dest: Path,
@@ -60,14 +124,25 @@ def download_ranges(
     chunk_size: int = 1 << 20,
     attempts_per_url: int = 3,
     max_refreshes: int = 4,
+    workers: int = 4,
     opener: Opener | None = None,
     sleep: Callable[[float], None] = time.sleep,
 ) -> Path:
-    opener = opener or _open_range
     dest.parent.mkdir(parents=True, exist_ok=True)
     part = dest.with_suffix(dest.suffix + ".part")
     try:
-        _fetch(get_url, part, headers, chunk_size, attempts_per_url, max_refreshes, opener, sleep)
+        with part.open("wb") as out:
+            dl = _Download(get_url, out.fileno(), headers, chunk_size, attempts_per_url, max_refreshes,
+                           opener or _open_range, sleep)
+            written = dl.chunk(0)  # sequential: learns the total size from the first response
+            total = dl.total
+            if total is None:
+                raise _fail()
+            out.truncate(total)
+            first = -(-written // chunk_size) * chunk_size
+            starts = range(first, total, chunk_size)
+            if starts:
+                _fetch_parallel(dl, starts, workers)
         part.replace(dest)
     except BaseException:
         part.unlink(missing_ok=True)
@@ -75,35 +150,14 @@ def download_ranges(
     return dest
 
 
-def _fetch(get_url, part, headers, chunk_size, attempts_per_url, max_refreshes, opener, sleep) -> None:
-    url = get_url()
-    refreshes = failures = offset = 0
-    total: int | None = None
-    with part.open("wb") as out:
-        while total is None or offset < total:
-            request_headers = {**headers, "Range": f"bytes={offset}-{offset + chunk_size - 1}"}
-            expired = False
-            try:
-                status, body, size = opener(url, request_headers)
-            except _FAILURES as exc:
-                log.warning("bilibili download error at byte %d: %s", offset, exc)
-                status, body, size = 0, b"", None
-            if status == 403:
-                expired = True
-            elif status < 400 and body and not (status == 200 and offset):  # 200 mid-file: Range was ignored
-                out.write(body)
-                offset += len(body)
-                failures = 0
-                total = size if size is not None else (offset if status == 200 else total)
-                continue
-            else:
-                failures += 1
-                log.warning("bilibili download failure %d at byte %d (status %s)", failures, offset, status)
-            if expired or failures >= attempts_per_url:
-                refreshes += 1
-                if refreshes > max_refreshes:
-                    raise _fail()
-                url = get_url()
-                failures = 0
-            else:
-                sleep(min(2 ** failures, 8))
+def _fetch_parallel(dl: _Download, starts: range, workers: int) -> None:
+    with ThreadPoolExecutor(max_workers=max(1, workers)) as pool:
+        futures = [pool.submit(dl.chunk, start) for start in starts]
+        try:
+            for future in as_completed(futures):
+                future.result()
+        except BaseException:
+            dl.abort.set()
+            for future in futures:
+                future.cancel()
+            raise

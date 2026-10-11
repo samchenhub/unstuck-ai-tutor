@@ -42,6 +42,7 @@ def run(opener, tmp_path, urls=("A", "B", "C", "D", "E", "F", "G"), **kw):
 
     dest = tmp_path / "sub" / "video.mp4"
     kw.setdefault("chunk_size", CHUNK)
+    kw.setdefault("workers", 1)  # deterministic call order; the parallel tests pass workers=4
     try:
         result = download_ranges(get_url, dest, headers={"Referer": "x"}, opener=opener, sleep=sleeps.append, **kw)
     finally:
@@ -100,3 +101,67 @@ def test_empty_body_counts_as_failure(tmp_path):
     run(opener, tmp_path)
     assert run.dest.read_bytes() == DATA
     assert run.sleeps == [2]
+
+
+BIG = bytes((i * 7 + i // 256) % 251 for i in range(10 * CHUNK))  # 10 chunks
+
+
+class UrlOpener:
+    """Thread-safe fake serving `data`; `rule(url, start)` -> None (serve), "fail" (OSError) or "partial"."""
+
+    def __init__(self, rule=lambda url, start: None, data=BIG):
+        self.rule, self.data, self.calls = rule, data, []
+
+    def __call__(self, url, headers):
+        start, end = parse_range(headers)
+        self.calls.append((url, start))
+        action = self.rule(url, start)
+        if action == "fail":
+            raise OSError("node down")
+        body = self.data[start:end + 1]
+        if action == "partial":
+            body = body[:300]
+        return 206, body, len(self.data)
+
+
+def test_parallel_download_is_byte_identical(tmp_path):
+    opener = UrlOpener()
+    run(opener, tmp_path, workers=4)
+    assert run.dest.read_bytes() == BIG
+    assert sorted(start for _u, start in opener.calls) == [i * CHUNK for i in range(10)]
+    assert opener.calls[0][1] == 0  # first request is sequential, to learn the total
+    assert not run.dest.with_suffix(".mp4.part").exists()
+
+
+def test_parallel_failing_chunk_refreshes_url_once(tmp_path):
+    opener = UrlOpener(lambda url, start: "fail" if url == "A" and start == 3 * CHUNK else None)
+    run(opener, tmp_path, workers=4)
+    assert run.dest.read_bytes() == BIG
+    assert run.fetched == ["A", "B"]
+    assert run.sleeps == [2, 4]
+
+
+def test_concurrent_failures_trigger_a_single_refresh(tmp_path):
+    opener = UrlOpener(lambda url, start: "fail" if url == "A" and start in (2 * CHUNK, 3 * CHUNK) else None)
+    run(opener, tmp_path, workers=4)
+    assert run.dest.read_bytes() == BIG
+    assert run.fetched == ["A", "B"]
+
+
+def test_parallel_partial_reads_resume_within_the_chunk(tmp_path):
+    opener = UrlOpener(lambda url, start: "partial" if start % CHUNK == 0 else None)
+    run(opener, tmp_path, workers=4)
+    assert run.dest.read_bytes() == BIG
+    assert run.fetched == ["A"] and run.sleeps == []
+    resumed = [start for _u, start in opener.calls if start % CHUNK]
+    assert len(resumed) == 10 and all(start % CHUNK == 300 for start in resumed)
+
+
+def test_parallel_persistent_chunk_failure_raises_and_cleans_up(tmp_path):
+    opener = UrlOpener(lambda url, start: "fail" if start == 3 * CHUNK else None)
+    with pytest.raises(IngestError) as err:
+        run(opener, tmp_path, workers=4)
+    assert err.value.code == "DOWNLOAD_FAILED"
+    assert len(run.fetched) == 5
+    assert not run.dest.exists()
+    assert not run.dest.with_suffix(".mp4.part").exists()
