@@ -137,12 +137,23 @@ def add_described_keyframe(
         )
 
 
+LIVE_KIND = "live"  # frames captured at question time (already described; not part of the background job)
+
+
 def count_described_keyframes(conn: sqlite3.Connection, video_id: str) -> tuple[int, int]:
-    """(described, total) keyframes; failed ones count as done so progress can reach the total."""
+    """(described, total) sampled keyframes; failed ones count as done so progress can reach the total."""
     row = conn.execute(
-        "SELECT SUM(status != 'pending'), COUNT(*) FROM keyframes WHERE video_id = ?", (video_id,)
+        "SELECT SUM(status != 'pending'), COUNT(*) FROM keyframes WHERE video_id = ? AND kind != ?",
+        (video_id, LIVE_KIND),
     ).fetchone()
     return int(row[0] or 0), int(row[1] or 0)
+
+
+def reset_failed_keyframes(conn: sqlite3.Connection, video_id: str) -> int:
+    with conn:
+        return conn.execute(
+            "UPDATE keyframes SET status = 'pending' WHERE video_id = ? AND status = 'failed'", (video_id,)
+        ).rowcount
 
 
 def save_frame_description(conn: sqlite3.Connection, keyframe_id: int, desc: FrameDescription | None) -> None:

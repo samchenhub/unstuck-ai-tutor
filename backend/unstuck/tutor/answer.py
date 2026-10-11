@@ -73,15 +73,13 @@ def _describe_recent_frame(
     if not pending or any(k.status == "ok" for k in recent):
         return keyframes
     target = pending[-1]
-    previous = [k for k in keyframes if k.status == "ok" and k.t < target.t][-1:]
+    previous = [k.summary for k in keyframes if k.status == "ok" and k.t < target.t][-1:]
     try:
-        vision.describe_pending(
-            llm, [*previous, target], lambda frame_id, desc: repo.save_frame_description(conn, frame_id, desc),
-            attempts=1,
-        )
-    except ModelBusyError:
-        log.info("on-demand frame for %s at %.0fs skipped: vision is rate-limited", video_id, target.t)
+        desc = vision.describe_frame(llm, target, previous[0] if previous else "")
+    except Exception as exc:  # rate-limited or failed: answer without it; the frame stays pending
+        log.info("on-demand frame for %s at %.0fs skipped: %s", video_id, target.t, exc)
         return keyframes
+    repo.save_frame_description(conn, target.id, desc)
     return repo.get_keyframes(conn, video_id)
 
 

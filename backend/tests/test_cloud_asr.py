@@ -56,10 +56,10 @@ def make(client, sleeps=None):
 
 
 def test_segments_become_cues_and_doubtful_ones_are_dropped(no_encode):
-    client = FakeClient([result("english", seg(0.0, 4.0, " Hello class. "), seg(4.0, 9.0, " you you you", ratio=3.1),
-                                seg(9.0, 12.0, " Thanks.", no_speech=0.95))])
+    client = FakeClient([result("english", seg(0.0, 4.0, " Hello class, today: gradient descent. "),
+                                seg(4.0, 9.0, " you you you", ratio=3.1), seg(9.0, 12.0, " Thanks.", no_speech=0.95))])
     cloud = make(client)
-    assert cloud.transcribe(np.zeros(16000, np.float32)) == [(0.0, 4.0, "Hello class.")]
+    assert cloud.transcribe(np.zeros(16000, np.float32)) == [(0.0, 4.0, "Hello class, today: gradient descent.")]
     call = client.calls[0]
     assert call["model"] == "whisper-large-v3-turbo" and call["response_format"] == "verbose_json"
     assert call["file"] == ("chunk.ogg", b"ogg", "audio/ogg") and "language" not in call
@@ -67,10 +67,11 @@ def test_segments_become_cues_and_doubtful_ones_are_dropped(no_encode):
 
 
 def test_chinese_is_resent_with_the_simplified_prompt_then_fixed(no_encode):
-    client = FakeClient([result("chinese", seg(0, 3, "這是導數")), result("chinese", seg(0, 3, "这是导数")),
+    trad, simp = "這是導數的定義，我們先看幾何意義，再看計算方法", "这是导数的定义，我们先看几何意义，再看计算方法"
+    client = FakeClient([result("chinese", seg(0, 3, trad)), result("chinese", seg(0, 3, simp)),
                          result("chinese", seg(0, 3, "下一段"))])
     cloud = make(client)
-    assert cloud.transcribe(np.zeros(16000, np.float32)) == [(0, 3, "这是导数")]
+    assert cloud.transcribe(np.zeros(16000, np.float32)) == [(0, 3, simp)]
     assert cloud.transcribe(np.zeros(16000, np.float32)) == [(0, 3, "下一段")]
     assert [c.get("language") for c in client.calls] == [None, "zh", "zh"]
     assert "简体中文" in client.calls[1]["prompt"] and "简体中文" in client.calls[2]["prompt"]
@@ -141,8 +142,21 @@ def test_iter_transcript_falls_back_to_local_whisper_for_a_chunk(monkeypatch, tm
 
     monkeypatch.setitem(sys.modules, "faster_whisper", SimpleNamespace(WhisperModel=FakeModel))
     tr._model.cache_clear()
-    client = FakeClient([result("english", seg(1, 5, "cloud")), rate_limited("900")])
+    said = "the cloud transcribed this first chunk"
+    client = FakeClient([result("english", seg(1, 5, said)), rate_limited("900")])
     events = list(tr.iter_transcript(tmp_path / "a.m4a", "small", cloud=make(client)))
-    assert [c.text for e in events for c in e.cues] == ["cloud", "local"]
+    assert [c.text for e in events for c in e.cues] == [said, "local"]
     assert local_calls[0]["language"] == "en"
     tr._model.cache_clear()
+
+
+def test_a_language_guessed_from_silence_is_not_locked_in(no_encode):
+    """A music intro comes back as 'english' with nothing kept: the next chunk detects again."""
+    client = FakeClient([result("english", seg(0, 30, " Music", no_speech=0.95)),
+                         result("chinese", seg(0, 3, "大家好，今天我们来讲导数的定义和几何意义")),
+                         result("chinese", seg(0, 3, "大家好，今天我们来讲导数的定义和几何意义"))])
+    cloud = make(client)
+    assert cloud.transcribe(np.zeros(16000, np.float32)) == []
+    assert cloud.language is None
+    assert cloud.transcribe(np.zeros(16000, np.float32)) == [(0, 3, "大家好，今天我们来讲导数的定义和几何意义")]
+    assert cloud.language == "zh" and [c.get("language") for c in client.calls] == [None, None, "zh"]

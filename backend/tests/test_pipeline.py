@@ -142,3 +142,11 @@ def test_states_written_by_the_background_vision_job_are_kept(ctx):
     Pipeline(recording([])).run(ctx)
     assert repo.get_video(ctx.conn, VID).stage_states["vision"] == "running"
     assert "vision" not in STAGES  # described in the background, not as a pipeline stage
+
+
+def test_a_run_with_nothing_left_to_do_clears_an_old_error(ctx):
+    repo.update_video(ctx.conn, VID, stage_states={name: "done" for name in STAGES},
+                      error_code="VISION_PARTIAL", error_message="old")
+    Pipeline(recording([])).run(ctx)
+    video = repo.get_video(ctx.conn, VID)
+    assert (video.status, video.error_code, video.error_message) == ("ready", None, None)

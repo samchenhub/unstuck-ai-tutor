@@ -53,7 +53,7 @@ class FakeLLM:
             yield chunk
 
     def vision(self, prompt: str, image_path: Path, *, attempts: int | None = None) -> str:
-        self.calls.append(("vision", (prompt, str(image_path))))
+        self.calls.append(("vision", (prompt, str(image_path), attempts)))
         return self._pop(self.vision_responses, DEFAULT_VISION)
 
     def embed(self, texts: list[str]) -> list[list[float]]:

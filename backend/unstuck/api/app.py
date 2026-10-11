@@ -97,9 +97,14 @@ def create_app(settings: Settings | None = None, llm: LLM | None = None, runner=
         return video
 
     def video_json(conn, video) -> dict:
-        """A video plus how far the background describer has got with its keyframes."""
+        """A video plus how far the background describer has got with its keyframes.
+
+        The 画面理解 state is derived from the frames rather than stored, so it is right for queued videos,
+        after a crash, and for databases from when vision was a pipeline stage.
+        """
         described, total = repo.count_described_keyframes(conn, video.id)
-        return {**asdict(video), "frames_described": described, "frames_total": total}
+        states = {**video.stage_states, "vision": _vision_state(video, described, total)}
+        return {**asdict(video), "stage_states": states, "frames_described": described, "frames_total": total}
 
     def start_import(conn, video_id: str) -> dict:
         # A run the user asked for starts a fresh round of automatic retries if it is rate-limited again.
@@ -136,6 +141,7 @@ def create_app(settings: Settings | None = None, llm: LLM | None = None, runner=
     @app.post("/api/videos/{video_id}/retry", status_code=202)
     def retry(video_id: str, conn=Depends(get_conn)):
         require_video(conn, video_id)
+        repo.reset_failed_keyframes(conn, video_id)  # described again in the background after the run
         return start_import(conn, video_id)
 
     @app.get("/api/videos/{video_id}/chats")
@@ -188,3 +194,14 @@ def create_app(settings: Settings | None = None, llm: LLM | None = None, runner=
         )
 
     return app
+
+
+def _vision_state(video, described: int, total: int) -> str:
+    keyframes = video.stage_states.get("keyframes")
+    if video.visual_mode == "transcript_only" or keyframes in ("failed", "skipped"):
+        return "skipped"
+    if keyframes != "done":
+        return "pending"
+    if total == 0:
+        return "skipped"
+    return "running" if described < total else "done"

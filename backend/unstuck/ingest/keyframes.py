@@ -7,6 +7,7 @@ import imagehash
 from PIL import Image
 
 from unstuck import media
+from unstuck.errors import IngestError
 from unstuck.models import NewKeyframe
 
 log = logging.getLogger(__name__)
@@ -74,6 +75,8 @@ def extract_keyframes(
         failures = 0
         candidates.append(NewKeyframe(t=t, image_path=str(path), phash=phash))
 
+    if not candidates:
+        raise IngestError("KEYFRAMES_FAILED", "没能从视频里截取画面，可以稍后重试")
     kept = dedupe_by_phash(candidates)
     kept_paths = {f.image_path for f in kept}
     for frame in candidates:

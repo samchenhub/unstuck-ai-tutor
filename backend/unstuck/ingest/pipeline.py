@@ -68,7 +68,7 @@ class Pipeline:
         states = {**video.stage_states, **{name: video.stage_states.get(name, "pending") for name in STAGES}}
         start = next((i for i, name in enumerate(STAGES) if states[name] not in _FINISHED), None)
         if start is None:
-            repo.update_video(ctx.conn, ctx.video_id, status="ready")
+            repo.update_video(ctx.conn, ctx.video_id, status="ready", error_code=None, error_message=None)
             return False
 
         for name in STAGES[start:]:

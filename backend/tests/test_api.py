@@ -82,7 +82,7 @@ def test_list_and_get(client, conn):
     repo.insert_video(conn, "aaaaaaaaaaa", "u")
     repo.insert_video(conn, "bbbbbbbbbbb", "u")
     assert [v["id"] for v in client.get("/api/videos").json()] == ["bbbbbbbbbbb", "aaaaaaaaaaa"]
-    assert client.get("/api/videos/aaaaaaaaaaa").json()["stage_states"] == {}
+    assert client.get("/api/videos/aaaaaaaaaaa").json()["stage_states"] == {"vision": "pending"}
     missing = client.get("/api/videos/zzzzzzzzzzz")
     assert missing.status_code == 404
     assert missing.json()["detail"]["code"] == "NOT_FOUND"
@@ -234,3 +234,37 @@ def test_videos_report_how_many_frames_are_described(client, conn):
     video = client.get("/api/videos/dQw4w9WgXcQ").json()
     assert (video["frames_described"], video["frames_total"]) == (1, 2)
     assert client.get("/api/videos").json()[0]["frames_total"] == 2
+
+
+def test_the_vision_state_follows_the_frames(client, conn):
+    from unstuck.models import FrameDescription, NewKeyframe
+
+    vid = "dQw4w9WgXcQ"
+    repo.insert_video(conn, vid, "https://www.youtube.com/watch?v=dQw4w9WgXcQ")
+    repo.update_video(conn, vid, status="ready", stage_states={"keyframes": "running", "vision": "failed"})
+    assert client.get(f"/api/videos/{vid}").json()["stage_states"]["vision"] == "pending"
+    repo.update_video(conn, vid, stage_states={"keyframes": "done", "vision": "failed"})  # an old database
+    first, _ = repo.replace_keyframes(conn, vid, [NewKeyframe(1.0, "/f/1.jpg", "0" * 16), NewKeyframe(9.0, "/f/2.jpg", "f" * 16)])
+    assert client.get(f"/api/videos/{vid}").json()["stage_states"]["vision"] == "running"
+    repo.save_frame_description(conn, first.id, FrameDescription("slide", "s", "", ""))
+    repo.save_frame_description(conn, _.id, None)
+    video = client.get(f"/api/videos/{vid}").json()
+    assert video["stage_states"]["vision"] == "done"
+    repo.add_described_keyframe(conn, vid, NewKeyframe(5.0, "/live/5.jpg", "1" * 16),
+                                FrameDescription("live", "what was on screen", "", ""))
+    video = client.get(f"/api/videos/{vid}").json()
+    assert (video["frames_described"], video["frames_total"]) == (2, 2)  # live frames are not part of the job
+    repo.update_video(conn, vid, stage_states={"keyframes": "skipped"})
+    assert client.get(f"/api/videos/{vid}").json()["stage_states"]["vision"] == "skipped"
+
+
+def test_retry_gives_failed_frames_another_chance(client, conn, runner):
+    from unstuck.models import NewKeyframe
+
+    vid = "dQw4w9WgXcQ"
+    repo.insert_video(conn, vid, "https://www.youtube.com/watch?v=dQw4w9WgXcQ")
+    repo.update_video(conn, vid, status="ready")
+    (frame,) = repo.replace_keyframes(conn, vid, [NewKeyframe(1.0, "/f/1.jpg", "0" * 16)])
+    repo.save_frame_description(conn, frame.id, None)
+    client.post(f"/api/videos/{vid}/retry")
+    assert [f.status for f in repo.get_keyframes(conn, vid)] == ["pending"]

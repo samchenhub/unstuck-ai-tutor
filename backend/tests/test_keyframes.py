@@ -82,3 +82,17 @@ def test_frames_from_a_stream_send_headers_and_refresh_an_expired_url(tmp_path, 
     assert all(h == {"Referer": "https://www.bilibili.com/"} for _v, _t, h in calls)
     assert calls[-1][0] == "https://cdn/new.mp4"  # refreshed after repeated failures
     assert len(frames) >= 5
+
+
+def test_no_frame_at_all_is_a_failure(tmp_path, monkeypatch):
+    import pytest
+
+    from unstuck.errors import IngestError
+
+    def broken(video, t, out, headers=None):
+        raise RuntimeError("403 Forbidden")
+
+    monkeypatch.setattr(keyframes.media, "extract_frame", broken)
+    with pytest.raises(IngestError) as err:
+        extract_keyframes(lambda: "https://cdn/v.mp4", duration=200.0, out_dir=tmp_path / "frames")
+    assert err.value.code == "KEYFRAMES_FAILED"

@@ -52,7 +52,7 @@ def _keep_as_keyframe(conn: sqlite3.Connection, video_id: str, second: int, imag
             phash = str(imagehash.phash(img))
         repo.add_described_keyframe(
             conn, video_id, NewKeyframe(float(second), str(image), phash),
-            FrameDescription(kind="other", summary=description, ocr_text="", change_note=""),
+            FrameDescription(kind=repo.LIVE_KIND, summary=description, ocr_text="", change_note=""),
         )
     except Exception:
         log.warning("could not keep the live frame of %s at %ss", video_id, second, exc_info=True)

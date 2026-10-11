@@ -37,7 +37,7 @@ def test_stream_plain_string_is_chunked():
 def test_vision_default_is_valid_json_and_records_call():
     llm = FakeLLM()
     assert '"summary"' in llm.vision("describe", "/tmp/x.jpg")
-    assert llm.calls == [("vision", ("describe", "/tmp/x.jpg"))]
+    assert llm.calls == [("vision", ("describe", "/tmp/x.jpg", None))]
 
 
 def test_embed_is_deterministic_and_normalized():

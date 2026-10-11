@@ -18,6 +18,7 @@ SIMPLIFIED_PROMPT = "以下是普通话的句子，请使用简体中文。"
 MAX_WAIT_S = 60.0  # wait out a short rate limit; a longer one is cheaper to transcribe locally
 MAX_NO_SPEECH = 0.8  # Whisper's own estimate that a segment is silence (where it tends to hallucinate)
 MAX_COMPRESSION_RATIO = 2.4  # repetitive output ("you you you…") compresses unusually well
+MIN_TEXT_TO_LOCK_LANGUAGE = 20  # characters of kept speech; a music/silent intro must not decide the language
 
 # verbose_json names the language ("english"); requests take ISO-639-1 codes.
 _LANGUAGE_CODES = {
@@ -53,6 +54,17 @@ def _retry_after(exc: openai.APIStatusError) -> float | None:
         return None
 
 
+def _kept_segments(reply) -> list[tuple[float, float, str]]:
+    """(start, end, text) of segments that are probably speech (not silence or repetition)."""
+    return [
+        (s.start, s.end, s.text.strip())
+        for s in reply.segments or []
+        if s.text.strip()
+        and (getattr(s, "no_speech_prob", 0.0) or 0.0) <= MAX_NO_SPEECH
+        and (getattr(s, "compression_ratio", 0.0) or 0.0) <= MAX_COMPRESSION_RATIO
+    ]
+
+
 class CloudTranscriber:
     """Transcribes chunks remotely; keeps the detected language so every chunk uses the same one."""
 
@@ -84,19 +96,15 @@ class CloudTranscriber:
         if reply is None:
             return None
         language = _LANGUAGE_CODES.get((getattr(reply, "language", "") or "").lower())
-        if self.language is None and language:
+        kept = _kept_segments(reply)
+        if self.language is None and language and sum(len(text) for _s, _e, text in kept) >= MIN_TEXT_TO_LOCK_LANGUAGE:
             self.language = language
             if language == "zh":  # Whisper writes Traditional characters for Mandarin unless prompted
                 reply = self._request(upload)
                 if reply is None:
                     return None
-        return [
-            (s.start, s.end, s.text.strip())
-            for s in reply.segments or []
-            if s.text.strip()
-            and (getattr(s, "no_speech_prob", 0.0) or 0.0) <= MAX_NO_SPEECH
-            and (getattr(s, "compression_ratio", 0.0) or 0.0) <= MAX_COMPRESSION_RATIO
-        ]
+                kept = _kept_segments(reply)
+        return kept
 
     def _request(self, upload: tuple[bytes, str, str]):
         data, name, mime = upload
