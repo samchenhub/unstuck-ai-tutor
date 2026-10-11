@@ -19,6 +19,9 @@ class Settings:
     llm_disable_thinking: bool = True
     llm_max_concurrency: int = 2
     bilibili_cookies_browser: str = "chrome"
+    groq_api_key: str = ""  # cloud speech-to-text; empty = transcribe locally with WHISPER_MODEL
+    groq_base_url: str = "https://api.groq.com/openai/v1"
+    groq_whisper_model: str = "whisper-large-v3-turbo"
 
     @property
     def db_path(self) -> Path:
@@ -48,4 +51,7 @@ def load_settings(env_file: bool = True) -> Settings:
         llm_disable_thinking=_flag(os.getenv("LLM_DISABLE_THINKING", "1")),
         llm_max_concurrency=int(os.getenv("LLM_MAX_CONCURRENCY", "2")),
         bilibili_cookies_browser=os.getenv("BILIBILI_COOKIES_BROWSER", "chrome").strip(),
+        groq_api_key=os.getenv("GROQ_API_KEY", "").strip(),
+        groq_base_url=os.getenv("GROQ_BASE_URL", "https://api.groq.com/openai/v1"),
+        groq_whisper_model=os.getenv("GROQ_WHISPER_MODEL", "whisper-large-v3-turbo"),
     )

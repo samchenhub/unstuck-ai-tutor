@@ -63,7 +63,7 @@ def test_transcript_falls_back_to_whisper(ctx, monkeypatch, tmp_path):
     youtube.save_info({"id": VID}, ctx.video_dir / "info.json")
     monkeypatch.setattr(youtube, "fetch_captions", lambda info: None)
     monkeypatch.setattr(youtube, "download_audio", lambda video_id, out_dir: tmp_path / "audio.m4a")
-    monkeypatch.setattr(stages.transcribe, "iter_transcript", lambda path, model, start=0.0: progress_events(sentences(3)))
+    monkeypatch.setattr(stages.transcribe, "iter_transcript", lambda path, model, start=0.0, cloud=None: progress_events(sentences(3)))
 
     stages.stage_transcript(ctx)
 
@@ -75,7 +75,7 @@ def test_transcript_with_nothing_fails(ctx, monkeypatch, tmp_path):
     youtube.save_info({"id": VID}, ctx.video_dir / "info.json")
     monkeypatch.setattr(youtube, "fetch_captions", lambda info: None)
     monkeypatch.setattr(youtube, "download_audio", lambda video_id, out_dir: tmp_path / "audio.m4a")
-    monkeypatch.setattr(stages.transcribe, "iter_transcript", lambda path, model, start=0.0: iter([]))
+    monkeypatch.setattr(stages.transcribe, "iter_transcript", lambda path, model, start=0.0, cloud=None: iter([]))
     with pytest.raises(IngestError) as err:
         stages.stage_transcript(ctx)
     assert err.value.code == "NO_TRANSCRIPT"
@@ -193,7 +193,7 @@ def test_transcription_opens_asking_after_the_first_minute(ctx, monkeypatch, tmp
     _whisper_only(ctx, monkeypatch, tmp_path)
     seen = []
 
-    def events(path, model, start=0.0):
+    def events(path, model, start=0.0, cloud=None):
         for cue in sentences(100):  # 500 s of speech, 5 s per cue
             yield stages.transcribe.TranscriptProgress([cue], cue.end)
             video = repo.get_video(ctx.conn, VID)
@@ -217,7 +217,7 @@ def test_transcription_resumes_where_it_stopped(ctx, monkeypatch, tmp_path):
     repo.update_video(ctx.conn, VID, transcribed_until=60.0, ask_ready=True)
     starts = []
 
-    def events(path, model, start=0.0):
+    def events(path, model, start=0.0, cloud=None):
         starts.append(start)
         return progress_events([Cue(60.0 + i * 5.0, 65.0 + i * 5.0, f"later {i}.") for i in range(4)])
 
@@ -236,3 +236,21 @@ def test_captions_reset_transcription_progress(ctx, monkeypatch):
     monkeypatch.setattr(youtube, "fetch_captions", lambda info: sentences(3))
     stages.stage_transcript(ctx)
     assert repo.get_video(ctx.conn, VID).transcribed_until == 0.0
+
+
+def test_transcription_uses_the_cloud_when_a_key_is_set(ctx, monkeypatch, tmp_path):
+    import dataclasses
+
+    _whisper_only(ctx, monkeypatch, tmp_path)
+    seen = []
+
+    def events(path, model, start=0.0, cloud=None):
+        seen.append(cloud)
+        return progress_events(sentences(2))
+
+    monkeypatch.setattr(stages.transcribe, "iter_transcript", events)
+    stages.stage_transcript(ctx)
+    ctx.settings = dataclasses.replace(ctx.settings, groq_api_key="test-key")
+    repo.update_video(ctx.conn, VID, transcribed_until=0.0)
+    stages.stage_transcript(ctx)
+    assert seen[0] is None and seen[1] is not None and seen[1].language is None

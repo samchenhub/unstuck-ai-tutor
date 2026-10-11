@@ -3,7 +3,7 @@ import logging
 from unstuck import sources
 from unstuck.db import repo
 from unstuck.errors import IngestError
-from unstuck.ingest import files, indexer, keyframes, outline, timeline, transcribe, vision
+from unstuck.ingest import cloud_asr, files, indexer, keyframes, outline, timeline, transcribe, vision
 from unstuck.ingest.pipeline import SKIPPED, StageContext, StageFn
 from unstuck.models import Cue
 
@@ -77,7 +77,8 @@ def _transcribe_locally(ctx: StageContext, src) -> None:
     audio = src.open_audio(ctx.video_id, ctx.video_dir, video.duration)  # may still be downloading
     published = covered = start
     embeddings: dict[str, list[float]] = {}
-    for progress in transcribe.iter_transcript(audio, ctx.settings.whisper_model, start=start):
+    cloud = cloud_asr.CloudTranscriber.from_settings(ctx.settings)
+    for progress in transcribe.iter_transcript(audio, ctx.settings.whisper_model, start=start, cloud=cloud):
         cues.extend(progress.cues)
         covered = progress.covered_until
         due = FIRST_PUBLISH_S if published == 0 else PUBLISH_EVERY_S

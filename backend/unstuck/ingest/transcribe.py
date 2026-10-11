@@ -7,6 +7,7 @@ from pathlib import Path
 
 import numpy as np
 
+from unstuck.ingest.cloud_asr import CloudTranscriber
 from unstuck.models import Cue
 from unstuck.sources.base import AudioFeed
 
@@ -69,11 +70,15 @@ def _options(model, audio: np.ndarray) -> tuple[dict, bool]:
     language, probability, _all = model.detect_language(audio, vad_filter=True)
     if probability < MIN_LANGUAGE_PROBABILITY:
         return {"vad_filter": True}, False
+    return _language_options(language), True
+
+
+def _language_options(language: str) -> dict:
     options: dict = {"vad_filter": True, "language": language}
     if language == "zh":
         # Whisper tends to emit Traditional characters for Mandarin; a Simplified prompt steers it.
         options["initial_prompt"] = _SIMPLIFIED_PROMPT
-    return options, True
+    return options
 
 
 def iter_transcript(
@@ -83,14 +88,16 @@ def iter_transcript(
     start: float = 0.0,
     chunk_s: float = CHUNK_S,
     first_chunk_s: float = FIRST_CHUNK_S,
+    cloud: CloudTranscriber | None = None,
 ) -> Iterator[TranscriptProgress]:
-    """Speech-to-text for videos without captions (local CPU), yielding cues as Whisper produces them.
+    """Speech-to-text for videos without captions, yielding cues as they are produced.
 
-    `audio` may still be downloading (an AudioFeed): each chunk is decoded once it is on disk. One event per
-    transcribed segment and one at the end of each chunk; starts at `start` to resume.
+    Each chunk goes to `cloud` when given (no local CPU); a chunk the cloud hands back, or every chunk without
+    one, runs through local Whisper. `audio` may still be downloading (an AudioFeed): each chunk is decoded once
+    it is on disk. One event per transcribed segment and one at the end of each chunk; starts at `start` to resume.
     """
     feed = audio if isinstance(audio, AudioFeed) else AudioFeed.complete(audio)
-    model = _model(model_name)
+    model = None  # loaded only if a chunk has to be transcribed locally
     options: dict | None = None
     offset = start
     size = first_chunk_s
@@ -110,16 +117,27 @@ def iter_transcript(
             continue
         if seconds < 0.5:  # past the end of the audio
             return
-        chunk_options = options
-        if chunk_options is None:
-            chunk_options, confident = _options(model, samples)
-            if confident:
-                options = chunk_options
-        segments, _info = model.transcribe(samples, **chunk_options)
-        for segment in segments:  # a lazy generator: segments arrive while Whisper works through the chunk
-            text = segment.text.strip()
-            if text:
-                yield TranscriptProgress([Cue(offset + segment.start, offset + segment.end, text)], offset + segment.end)
+        remote = cloud.transcribe(samples) if cloud is not None else None
+        if remote is not None:
+            for seg_start, seg_end, text in remote:
+                yield TranscriptProgress([Cue(offset + seg_start, offset + seg_end, text)], offset + seg_end)
+        else:
+            if model is None:
+                model = _model(model_name)
+            chunk_options = options
+            if chunk_options is None and cloud is not None and cloud.language:
+                chunk_options = options = _language_options(cloud.language)  # the cloud already detected it
+            if chunk_options is None:
+                chunk_options, confident = _options(model, samples)
+                if confident:
+                    options = chunk_options
+            segments, _info = model.transcribe(samples, **chunk_options)
+            for segment in segments:  # a lazy generator: segments arrive while Whisper works through the chunk
+                text = segment.text.strip()
+                if text:
+                    yield TranscriptProgress(
+                        [Cue(offset + segment.start, offset + segment.end, text)], offset + segment.end
+                    )
         del samples
         yield TranscriptProgress([], offset + seconds)
         if seconds < size - 1:  # a short chunk of a complete file is the last one
