@@ -1,6 +1,8 @@
+import re
+import urllib.error
 import urllib.request
 from collections.abc import Callable
-from urllib.parse import urlparse
+from urllib.parse import urljoin, urlparse
 
 from unstuck.config import Settings
 from unstuck.errors import IngestError
@@ -12,6 +14,10 @@ from unstuck.sources.bilibili.client import USER_AGENT
 from unstuck.sources.bilibili.source import NAME as BILIBILI, BilibiliSource, client_for
 
 INVALID_MESSAGE = "不是有效的 YouTube 或 B站视频链接"
+SHORT_LINK_MESSAGE = "B站短链接解析失败，请粘贴完整的视频链接"
+# App share text wraps the link in a title ("【标题-哔哩哔哩】 https://b23.tv/…"); URLs are ASCII, so CJK ends them.
+_URL_IN_TEXT_RE = re.compile(r"https?://[A-Za-z0-9\-._~:/?#\[\]@!$&'()*+,;=%]+")
+_BVID_IN_TEXT_RE = re.compile(r"(?<![0-9A-Za-z])BV[0-9A-Za-z]{10}(?![0-9A-Za-z])")
 
 
 def _host(text: str) -> str:
@@ -21,25 +27,53 @@ def _host(text: str) -> str:
         return ""
 
 
-def _follow_redirect(url: str) -> str:
-    """Resolve a b23.tv short link to the bilibili.com page it redirects to."""
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        return None  # surface the 30x as an HTTPError so its Location can be checked, not fetched
+
+
+def _no_redirect_opener():
+    return urllib.request.build_opener(_NoRedirect)
+
+
+def _short_link_target(url: str) -> str:
+    """Read where a b23.tv short link points (one HEAD request; the target itself is never fetched)."""
+    request = urllib.request.Request(url, method="HEAD", headers={"User-Agent": USER_AGENT})
     try:
-        request = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
-        with urllib.request.urlopen(request, timeout=10) as resp:
-            return resp.geturl()
+        with _no_redirect_opener().open(request, timeout=10):
+            pass
+    except urllib.error.HTTPError as exc:
+        location = exc.headers.get("Location") if 300 <= exc.code < 400 else None
+        if location:
+            return urljoin(url, location)
+        raise IngestError("INVALID_URL", SHORT_LINK_MESSAGE) from exc
     except Exception as exc:
-        raise IngestError("INVALID_URL", "B站短链接解析失败，请粘贴完整的视频链接") from exc
+        raise IngestError("INVALID_URL", SHORT_LINK_MESSAGE) from exc
+    raise IngestError("INVALID_URL", SHORT_LINK_MESSAGE)
 
 
-def resolve(url: str, settings: Settings, follow_redirect: Callable[[str], str] = _follow_redirect) -> VideoRef:
-    """Turn a pasted link into a VideoRef; raises IngestError (INVALID_URL / UNSUPPORTED_URL)."""
-    text = url.strip()
+def _extract_link(text: str) -> str:
+    """Pull the link (or bare BV id) out of pasted share text; plain links pass through unchanged."""
+    if text.isascii() and not re.search(r"\s", text):
+        return text
+    if match := _URL_IN_TEXT_RE.search(text):
+        return match.group(0)
+    if match := _BVID_IN_TEXT_RE.search(text):
+        return match.group(0)
+    return text
+
+
+def resolve(url: str, settings: Settings, follow_redirect: Callable[[str], str] = _short_link_target) -> VideoRef:
+    """Turn a pasted link (or share text) into a VideoRef; raises IngestError (INVALID_URL / UNSUPPORTED_URL)."""
+    text = _extract_link(url.strip())
     if bili.BVID_RE.fullmatch(text):
         text = bili.watch_url(text, 1)
     host = _host(text)
     if host in bili.SHORT_HOSTS:
         text = follow_redirect(text if "://" in text else f"https://{text}")
         host = _host(text)
+        if not (host and bili.is_bilibili_host(host)) or host in bili.SHORT_HOSTS:
+            raise IngestError("INVALID_URL", SHORT_LINK_MESSAGE)
     if host and bili.is_bilibili_host(host):
         bvid, part = bili.parse_url(text)
         return VideoRef(source=BILIBILI, video_id=bili.make_video_id(bvid, part),
@@ -64,4 +98,4 @@ def for_video(video: Video, settings: Settings) -> Source:
 
 def bilibili_status(settings: Settings) -> dict:
     browser = settings.bilibili_cookies_browser
-    return {"logged_in": bool(browser) and client_for(settings).is_logged_in(force=True), "cookies_browser": browser}
+    return {"logged_in": bool(browser) and client_for(settings).check_login(), "cookies_browser": browser}

@@ -183,3 +183,21 @@ def test_forced_login_check_bypasses_cache_and_drops_cookie_jar():
     assert client.is_logged_in() is False  # still cached
     assert client.is_logged_in(force=True) is True
     assert client._ydl is None
+
+
+def test_check_login_trusts_cached_login_and_rechecks_logout():
+    logged_in = {"code": 0, "data": {"isLogin": True, "wbi_img": NAV["data"]["wbi_img"]}}
+    client, _ = make({"/x/web-interface/nav": [NAV, logged_in]})
+    assert client.check_login() is False
+    assert client.check_login() is True  # logged out is re-checked: the user may have just logged in
+    client._ydl = sentinel = object()
+    assert client.check_login() is True  # a cached login is trusted, cookies are not re-read
+    assert client._ydl is sentinel
+
+
+def test_check_login_does_not_reread_unreadable_cookies():
+    client, _ = make({"/x/web-interface/nav": [NAV, NAV]})
+    assert client.check_login() is False
+    client.cookies_unavailable = True  # e.g. the macOS keychain prompt was refused
+    assert client.check_login() is False
+    assert client.cookies_unavailable is True

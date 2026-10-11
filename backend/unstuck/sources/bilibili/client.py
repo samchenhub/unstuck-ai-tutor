@@ -161,6 +161,13 @@ class BiliClient:
         self._login = (now, logged_in)
         return logged_in
 
+    def check_login(self) -> bool:
+        """Login state for the UI: trust a cached login, re-check a logout (the user may have just logged in),
+        but never re-read cookies that failed to load (on macOS that re-opens the keychain prompt)."""
+        if self._login and self._login[1] and self._clock() - self._login[0] < LOGIN_CACHE_S:
+            return True
+        return self.is_logged_in(force=not self.cookies_unavailable)
+
     def view(self, bvid: str) -> dict:
         return self._data(self.get(self._url("/x/web-interface/view", {"bvid": bvid})))
 
