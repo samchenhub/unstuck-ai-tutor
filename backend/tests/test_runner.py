@@ -201,3 +201,31 @@ def test_startup_resumes_background_vision(settings, fake_llm, conn):
     runner.schedule_pending(conn)
     assert vision.enqueued == [VID]
     runner.shutdown()
+
+
+def test_startup_clears_errors_left_by_the_old_vision_stage(settings, fake_llm, conn):
+    from unstuck.ingest.pipeline import STAGES
+
+    repo.insert_video(conn, VID, "https://youtu.be/abcdefghijk")
+    repo.update_video(conn, VID, status="ready", stage_states={**{n: "done" for n in STAGES}, "vision": "failed"},
+                      error_code="MODEL_BUSY", error_message="已自动重试 5 次仍未成功", auto_retries=5)
+    from unstuck.models import NewKeyframe
+
+    repo.replace_keyframes(conn, VID, [NewKeyframe(1.0, "/f/1.jpg", "0" * 16)])
+    vision = RecordingVision()
+    runner = PipelineRunner(settings, lambda: fake_llm, pipeline=RateLimited([]), vision=vision)
+    runner.schedule_pending(conn)
+    video = repo.get_video(conn, VID)
+    assert (video.error_code, video.error_message, video.auto_retries) == (None, None, 0)
+    assert vision.enqueued == [VID]  # its frames are still described in the background
+    runner.shutdown()
+
+
+def test_startup_keeps_errors_of_unfinished_stages(settings, fake_llm, conn):
+    repo.insert_video(conn, VID, "https://youtu.be/abcdefghijk")
+    repo.update_video(conn, VID, status="ready", stage_states={"outline": "failed"}, error_code="OUTLINE_FAILED",
+                      error_message="大纲生成失败")
+    runner = PipelineRunner(settings, lambda: fake_llm, pipeline=RateLimited([]), vision=RecordingVision())
+    runner.schedule_pending(conn)
+    assert repo.get_video(conn, VID).error_code == "OUTLINE_FAILED"
+    runner.shutdown()

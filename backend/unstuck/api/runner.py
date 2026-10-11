@@ -7,7 +7,7 @@ from concurrent.futures import Future, ThreadPoolExecutor
 
 from unstuck.config import Settings
 from unstuck.db import connect, repo
-from unstuck.ingest.pipeline import Pipeline, StageContext
+from unstuck.ingest.pipeline import STAGES, Pipeline, StageContext
 from unstuck.ingest.vision_worker import VisionWorker
 from unstuck.llm.base import LLM
 
@@ -106,7 +106,11 @@ class PipelineRunner:
         for video in repo.list_videos(conn):
             if video.status == "importing":
                 continue  # resubmitted at startup; its run plans its own follow-ups
-            if video.auto_retry_at > 0:
+            if video.error_code and all(video.stage_states.get(s) in ("done", "skipped") for s in STAGES):
+                # Left by the old vision stage: every stage has finished, and frames continue in the background.
+                repo.update_video(conn, video.id, error_code=None, error_message=None, auto_retries=0,
+                                  auto_retry_at=0.0)
+            elif video.auto_retry_at > 0:
                 self._schedule(video.id, max(0.0, video.auto_retry_at - now))
             if _has_pending_frames(conn, video.id):
                 self._vision.enqueue(video.id)
