@@ -1,5 +1,3 @@
-import pytest
-
 from unstuck.models import Cue
 from unstuck.sources.bilibili.client import BiliClient
 from unstuck.sources.bilibili.source import BilibiliSource
@@ -58,76 +56,22 @@ def test_playback_and_parts():
     assert [p.video_id for p in src.parts(f"{BV}_p2")] == [f"{BV}_p1", f"{BV}_p2"]
 
 
-def test_downloads_use_cookies_and_part_url(monkeypatch, tmp_path):
-    calls = []
+def test_audio_and_video_share_one_mp4_download(monkeypatch, tmp_path):
+    seen = []
 
-    class FakeYDL:
-        def __init__(self, opts):
-            calls.append(opts)
+    def opener(url, headers):
+        seen.append((url, headers))
+        start = int(headers["Range"].removeprefix("bytes=").split("-")[0])
+        return 206, b"mp4data"[start:], 7
 
-        def __enter__(self):
-            return self
-
-        def __exit__(self, *a):
-            return False
-
-        def extract_info(self, url, download):
-            calls.append(url)
-            return {"ext": "mp4"}
-
-        def prepare_filename(self, info):
-            return str(tmp_path / "video.mp4")
-
-    monkeypatch.setattr("unstuck.sources.bilibili.source.YoutubeDL", FakeYDL)
+    monkeypatch.setattr("unstuck.sources.bilibili.download._open_range", opener)
     src = source(base_routes(GOOD_SUB))
-    assert src.download_video(f"{BV}_p2", tmp_path) == tmp_path / "video.mp4"
-    opts, url = calls
-    assert opts["cookiesfrombrowser"] == ("chrome",) and opts["noplaylist"] is True
-    assert url == f"https://www.bilibili.com/video/{BV}?p=2"
-
-
-def test_downloads_are_chunked_with_backoff_retries(monkeypatch, tmp_path):
-    captured = []
-
-    class FakeYDL:
-        def __init__(self, opts):
-            captured.append(opts)
-
-        def __enter__(self):
-            return self
-
-        def __exit__(self, *a):
-            return False
-
-        def extract_info(self, url, download):
-            return {"ext": "m4a"}
-
-        def prepare_filename(self, info):
-            return str(tmp_path / "audio.m4a")
-
-    monkeypatch.setattr("unstuck.sources.bilibili.source.YoutubeDL", FakeYDL)
-    source(base_routes(GOOD_SUB)).download_audio(f"{BV}_p1", tmp_path)
-    opts = captured[0]
-    assert opts["http_chunk_size"] == 1 << 20
-    assert opts["retries"] == 10 and opts["fragment_retries"] == 10
-    sleep = opts["retry_sleep_functions"]["http"]
-    assert [sleep(n) for n in (1, 2, 10)] == [2, 4, 30]
-
-
-def test_download_errors_become_download_failed(monkeypatch, tmp_path):
-    from unstuck.errors import IngestError
-
-    class Boom:
-        def __init__(self, opts):
-            pass
-
-        def __enter__(self):
-            raise OSError("disk full")
-
-        def __exit__(self, *a):
-            return False
-
-    monkeypatch.setattr("unstuck.sources.bilibili.source.YoutubeDL", Boom)
-    with pytest.raises(IngestError) as err:
-        source(base_routes(GOOD_SUB)).download_audio(f"{BV}_p1", tmp_path)
-    assert err.value.code == "DOWNLOAD_FAILED"
+    out = tmp_path / "vid"
+    assert src.download_audio(f"{BV}_p2", out) == out / "video.mp4"
+    assert (out / "video.mp4").read_bytes() == b"mp4data"
+    n = len(seen)
+    assert n >= 1
+    assert seen[0][0] == "https://upos.bilivideo.com/v.mp4?deadline=1791671421"
+    assert seen[0][1]["Referer"] == "https://www.bilibili.com/"
+    assert src.download_video(f"{BV}_p2", out) == out / "video.mp4"
+    assert len(seen) == n  # reused, no second download

@@ -119,11 +119,11 @@
 - **解决**：`extract_frame` 新增可选 `headers` 参数，在 `-i` 之前加上 `-user_agent` 和 `-headers`（Referer 等）；`live_frame_description` 对在线流传入 B站的浏览器 UA + Referer，本地文件仍不带任何头。
 - **代码**：`backend/unstuck/media.py`、`backend/unstuck/tutor/frame.py`
 
-### 19. B站视频下载中途断开，yt-dlp 默认重试不够
-- **问题**：B站视频/音频下载经常中途断掉（只下了 0.95 MB / 16.5 MB），或者 503、连接被关闭；yt-dlp 默认重试有时 4 分钟才成功，有时直接放弃。
-- **原因**：B站 CDN 会切断长时间的单连接下载，并对短时间内的大量请求限流；浏览器播放不受影响，因为它按片段请求、断了会自动重连。用 ffmpeg 直接拉整个 MP4 也一样被截断，确认不是 yt-dlp 的问题。
-- **解决**：下载时按 1 MB 分段（Range 请求），失败后指数退避重试（2、4、8… 最多 30 秒，最多 10 次）；实测 3 次全部成功，音频 16.5 MB 约 10 秒。
-- **代码**：`backend/unstuck/sources/bilibili/source.py`（`_ROBUST_DOWNLOAD_OPTS`）
+### 19. B站视频下载中途断开，换了下载方式也一直失败
+- **问题**：B站视频/音频下载经常中途断掉（只下了 0.95 MB / 16.5 MB），或者一直报 `Remote end closed connection`；yt-dlp 重试 10 次要 3 分钟，一次导入甚至拖了 43 分钟。
+- **原因**：两层问题叠加。一是 B站 CDN 会切断长时间的单连接下载（yt-dlp 默认下载和 `ffmpeg -c copy` 都被截断，浏览器播放不受影响，因为它按片段请求）。二是同一个播放地址背后个别 CDN 节点会间歇性出故障：固定在同一字节处 `IncompleteRead`（总是 953,844 字节），或者 10 次重试全部被拒绝连接；而重新获取的播放地址马上就能正常返回所有分段。yt-dlp 一直重试同一个地址，所以逃不出坏节点。
+- **解决**：不再用 yt-dlp 下载，自己写了按 1 MB 分段的 Range 下载器：收到一半的数据也保留，下一次从当前偏移继续；连续失败 3 次（指数退避 2、4 秒）就重新获取一个新的播放地址，403（地址过期）立即换地址，最多换 4 次，写入 `.part` 临时文件，成功后才改名。只下载一个 720p 的 MP4（H.264 + AAC），转写时用 ffmpeg 解出音频，截帧时直接用同一个文件，下载只做一次。
+- **代码**：`backend/unstuck/sources/bilibili/download.py`、`backend/unstuck/sources/bilibili/source.py`
 
 ### 20. 没有字幕的 B站视频，本地语音转写直接报错，且结果是繁体字
 - **问题**：没有字幕的 B站视频，语音转写阶段直接报错 `open() got an unexpected keyword argument 'metadata_errors'`；绕过之后，转写结果是繁体字，还有错字。

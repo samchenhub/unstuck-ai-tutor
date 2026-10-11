@@ -3,35 +3,16 @@ import logging
 import time
 from pathlib import Path
 
-from yt_dlp import YoutubeDL
-from yt_dlp.utils import DownloadError, YoutubeDLError
-
 from unstuck.config import Settings
-from unstuck.errors import IngestError
 from unstuck.models import Cue
 from unstuck.sources.base import Part, Playback, VideoMeta
 from unstuck.sources.bilibili import parse
-from unstuck.sources.bilibili.client import BiliClient
+from unstuck.sources.bilibili.client import HEADERS, BiliClient
+from unstuck.sources.bilibili.download import download_ranges
 
 log = logging.getLogger(__name__)
 
 NAME = "bilibili"
-# Analysis only needs pictures; H.264 keeps OpenCV scene detection happy.
-_VIDEO_FORMAT = "bv*[height<=720][vcodec^=avc1]/bv*[height<=720]/b[height<=720]/b"
-_AUDIO_FORMAT = "ba/b"
-
-
-def _http_retry_sleep(n: int) -> float:
-    return min(2 ** n, 30)
-
-
-# B站 CDN cuts long single-connection downloads and rate-limits bursts: fetch in 1 MB ranges, retry with backoff.
-_ROBUST_DOWNLOAD_OPTS = {
-    "http_chunk_size": 1 << 20,
-    "retries": 10,
-    "fragment_retries": 10,
-    "retry_sleep_functions": {"http": _http_retry_sleep},
-}
 
 
 @functools.lru_cache(maxsize=4)
@@ -74,24 +55,17 @@ class BilibiliSource:
             return None
         return cues
 
-    def _download(self, video_id: str, out_dir: Path, fmt: str, stem: str, failure: str) -> Path:
-        bvid, part = parse.split_video_id(video_id)
-        out_dir.mkdir(parents=True, exist_ok=True)
-        opts = {**self.client.ydl_options(), **_ROBUST_DOWNLOAD_OPTS, "format": fmt, "noplaylist": True,
-                "outtmpl": str(out_dir / f"{stem}.%(ext)s")}
-        try:
-            with YoutubeDL(opts) as ydl:
-                info = ydl.extract_info(parse.watch_url(bvid, part), download=True)
-                return Path(ydl.prepare_filename(info))
-        except (DownloadError, OSError, YoutubeDLError) as exc:
-            log.warning("%s (%s): %s", failure, video_id, exc)
-            raise IngestError("DOWNLOAD_FAILED", failure) from exc
-
     def download_video(self, video_id: str, out_dir: Path) -> Path:
-        return self._download(video_id, out_dir, _VIDEO_FORMAT, "video", "视频下载失败")
+        """Download the 720p H.264+AAC MP4 (resumable, fresh URL after repeated failures); reused if present."""
+        dest = out_dir / "video.mp4"
+        if dest.is_file() and dest.stat().st_size > 0:
+            return dest
+        return download_ranges(lambda: self.playback(video_id).url, dest, headers=HEADERS)
 
     def download_audio(self, video_id: str, out_dir: Path) -> Path:
-        return self._download(video_id, out_dir, _AUDIO_FORMAT, "audio", "音频下载失败")
+        # The MP4 carries the AAC track and transcription decodes it with ffmpeg, so one download serves
+        # both Whisper and keyframes.
+        return self.download_video(video_id, out_dir)
 
     def playback(self, video_id: str, quality: int = 720) -> Playback:
         info = self.fetch_info(video_id)
