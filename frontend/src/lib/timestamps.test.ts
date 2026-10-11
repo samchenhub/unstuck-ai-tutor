@@ -24,6 +24,12 @@ describe('linkifyTimestamps', () => {
     expect(linkifyTimestamps(md)).toBe(md)
   })
 
+  it('links time ranges like [03:02-04:02] to their start', () => {
+    expect(linkifyTimestamps('见 [03:02-04:02] 和 [1:00:00–1:00:30] 与 [00:10 ~ 00:20]')).toBe(
+      '见 [03:02-04:02](#t=182) 和 [1:00:00–1:00:30](#t=3600) 与 [00:10 ~ 00:20](#t=10)',
+    )
+  })
+
   it('ignores brackets that are not times', () => {
     expect(linkifyTimestamps('[1:99] [note]')).toBe('[1:99] [note]')
   })

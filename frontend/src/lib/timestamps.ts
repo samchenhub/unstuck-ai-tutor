@@ -1,4 +1,6 @@
-const TIMESTAMP_RE = /\[(?:(\d{1,2}):)?(\d{1,2}):([0-5]\d)\](?!\()/g
+const TIME = String.raw`(?:\d{1,2}:)?\d{1,2}:[0-5]\d`
+// [mm:ss], [h:mm:ss], or a range such as [03:02-04:02] (which links to its start).
+const TIMESTAMP_RE = new RegExp(String.raw`\[(?:(\d{1,2}):)?(\d{1,2}):([0-5]\d)(?:\s*[-–—~]\s*${TIME})?\](?!\()`, 'g')
 const CODE_RE = /(```[\s\S]*?```|`[^`\n]*`)/g
 
 function outsideCode(md: string, transform: (text: string) => string): string {
@@ -20,7 +22,7 @@ export function formatTime(seconds: number): string {
   return h > 0 ? `${h}:${mm}:${ss}` : `${mm}:${ss}`
 }
 
-/** Turn [mm:ss] / [h:mm:ss] into markdown links "#t=<seconds>" (code is left untouched). */
+/** Turn [mm:ss] / [h:mm:ss] (or a range of them) into markdown links "#t=<seconds>" (code is left untouched). */
 export function linkifyTimestamps(md: string): string {
   return outsideCode(md, (text) =>
     text.replace(
