@@ -1,5 +1,7 @@
 # Unstuck
 
+[![CI](https://github.com/samchenhub/unstuck-ai-tutor/actions/workflows/ci.yml/badge.svg)](https://github.com/samchenhub/unstuck-ai-tutor/actions/workflows/ci.yml)
+
 > *Stuck on a video? Pause and ask.*
 
 Unstuck is a one-on-one AI tutor that sits next to a YouTube **or Bilibili** lecture. Pause anywhere and ask a question: the tutor knows **which second you are at** and **what is on screen** (formulas, code, diagrams, slides), explains with the video's own content, and answers with clickable `[mm:ss]` timestamps and rendered LaTeX.
@@ -51,15 +53,25 @@ FastAPI · SQLite + sqlite-vec · yt-dlp · ffmpeg · Groq Whisper API / faster-
 
 ## Run it locally
 
-Prerequisites: [uv](https://docs.astral.sh/uv/), Node 20.19+ (required by Vite 8), ffmpeg (`brew install uv node ffmpeg`), and a Zhipu API key from open.bigmodel.cn.
+Prerequisites: [uv](https://docs.astral.sh/uv/), Node 20.19+ (required by Vite 8), ffmpeg, and a Zhipu API key from open.bigmodel.cn. Works on macOS, Windows and Linux (CI runs the tests on all three).
 
-One step: double-click `Unstuck.command` in Finder, or run
+**macOS**: `brew install uv node ffmpeg`, then double-click `Unstuck.command` in Finder, or run
 
 ```bash
 ./start.sh
 ```
 
-It installs missing dependencies, starts the backend (:8000) and frontend (:5173), and opens http://localhost:5173. Press Ctrl+C or close the window to stop both. On the first run it creates `backend/.env` from `.env.example`; put your key in `LLM_API_KEY` and run it again.
+**Windows**: install the prerequisites once (in PowerShell or Terminal, then open a new window so they are on the PATH):
+
+```powershell
+winget install -e --id astral-sh.uv
+winget install -e --id OpenJS.NodeJS.LTS
+winget install -e --id Gyan.FFmpeg
+```
+
+then double-click `Unstuck.bat` (it runs `start.ps1`).
+
+The launcher installs missing dependencies, starts the backend (:8000) and frontend (:5173), and opens http://localhost:5173. Press Ctrl+C or close the window to stop both. On the first run it creates `backend/.env` from `.env.example`; put your key in `LLM_API_KEY` (Notepad is fine) and run it again.
 
 To run the two servers separately instead:
 
@@ -81,7 +93,7 @@ Frames are described in the background after the import, at the free vision mode
 
 Paste a `bilibili.com/video/BV…` link (or a `b23.tv` share link). Multi-part courses import one part at a time; the video page lists the other parts with an import button.
 
-Unstuck reads your Bilibili login from your browser: `BILIBILI_COOKIES_BROWSER` in `backend/.env` accepts `chrome` (the default), `safari`, `edge`, `firefox`, or empty to disable login (on macOS, Chrome asks once for Keychain access to "Chrome Safe Storage"). Logged in, it uses Bilibili's subtitles (uploader-made or AI-generated) and requests 720p playback; logged out it still works, but transcribes the speech (Groq or local Whisper) and plays at lower quality. Bilibili videos play straight from Bilibili's CDN in the browser's own player, so watching starts immediately.
+**Log in by scanning a QR code**: when Bilibili is not logged in, the library shows 扫码登录; scan the code with the Bilibili mobile app and confirm. The login is saved locally in `backend/data/bilibili_cookies.txt` (keep it private; 退出登录 deletes it). This works on every platform. On macOS Unstuck can also read the login from your browser: `BILIBILI_COOKIES_BROWSER` in `backend/.env` accepts `chrome` (the macOS default), `safari`, `edge`, `firefox`, or empty (on macOS, Chrome asks once for Keychain access to "Chrome Safe Storage"); on Windows, Chrome's cookies cannot be read by other programs, so use the QR code. Logged in, it uses Bilibili's subtitles (uploader-made or AI-generated) and requests 720p playback; logged out it still works, but transcribes the speech (Groq or local Whisper) and plays at lower quality. Bilibili videos play straight from Bilibili's CDN in the browser's own player, so watching starts immediately.
 
 This relies on Bilibili's unofficial web APIs; it is for personal use and demos.
 
