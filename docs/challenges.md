@@ -130,3 +130,9 @@
 - **原因**：第一阶段测试过的视频都有字幕，本地转写从没真正跑过；faster-whisper 1.2.1 解码音频时调用的 PyAV 参数 `metadata_errors` 在 PyAV 19 中已被移除。Whisper small 对普通话常输出繁体。
 - **解决**：自己用 ffmpeg 把音频解码成 16 kHz 单声道波形（681 秒音频约 0.4 秒）再交给 Whisper，彻底绕开 PyAV；先用 `detect_language` 检测语言，检测到中文时加上简体中文提示词（`initial_prompt`）并固定 `language="zh"`。
 - **代码**：`backend/unstuck/ingest/transcribe.py`
+
+### 21. 导入新的一集时，播放器偶尔加载失败，差点用完重试次数
+- **问题**：在选集列表里点「导入」第 4 集，页面立即跳转，但视频好几秒都加载不出来；后台日志显示播放地址被请求了 5 次（正常 1–2 次），说明 `<video>` 连续报错 3 次，第 3 次刷新地址才成功，再失败一次就会显示「B站视频加载失败」。
+- **原因**：B站给的播放地址大约一半落在 Akamai 镜像（`upos-hz-mirrorakam.akamaized.net`）。导入时后台正用 4 路并行下载同一个视频，这时浏览器再请求，CDN 会把这种突发请求直接回 403；过一会儿同样的地址就能正常返回 206（和 Referer 无关，换不同 Referer 结果一样）。播放器出错后立刻换地址重试，正好又撞上限流，几次重试在一秒内就用光了。
+- **解决**：播放器刷新地址前先等待，按 1、2、4 秒指数退避（最多 8 秒），而不是立即重试；切换视频时清掉未执行的重试计时器，避免旧视频的地址覆盖新视频。
+- **代码**：`frontend/src/components/BiliPlayer.tsx`、`frontend/src/lib/retry.ts`
