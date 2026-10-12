@@ -49,7 +49,7 @@ Design details: `docs/superpowers/specs/2026-10-09-unstuck-design.md`.
 
 ## Stack
 
-FastAPI · SQLite + sqlite-vec · yt-dlp · ffmpeg · Groq Whisper API / faster-whisper · imagehash · React + TypeScript + Vite · KaTeX. Models go through one interface (`backend/unstuck/llm`); the defaults are Zhipu's free `glm-4.7-flash` (text) and `glm-4.6v-flash` (vision) plus local `BAAI/bge-m3` embeddings. Any OpenAI-compatible endpoint works by changing `.env`. Model calls retry with backoff (2/4/8/16/32 s) to ride out free-tier rate limits. The tutor answers in the language of the question.
+FastAPI · SQLite + sqlite-vec · yt-dlp · ffmpeg · Groq Whisper API / faster-whisper · imagehash · React + TypeScript + Vite · KaTeX. Models go through one interface (`backend/unstuck/llm`); the defaults are Zhipu's free `glm-4.7-flash` (text) and `glm-4.6v-flash` (vision) plus local `BAAI/bge-m3` embeddings. Any OpenAI-compatible endpoint works by changing `.env`; for faster, more accurate answers at about ¥0.005 per question, use DeepSeek V4.1 Flash (`deepseek-flash`) for both chat and vision (see `backend/.env.example`). In a side-by-side test on real lectures it started answering in 2.4–3.9 s instead of 3–8.6 s, read the live screen every time (the free vision model was rate-limited 4 times out of 5) and avoided the free model's factual slips. Model calls retry with backoff (2/4/8/16/32 s) to ride out free-tier rate limits. The tutor answers in the language of the question.
 
 ## Run it locally
 
