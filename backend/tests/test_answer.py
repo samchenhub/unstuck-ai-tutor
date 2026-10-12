@@ -290,3 +290,44 @@ def test_a_rate_limited_on_demand_frame_does_not_block_the_answer(conn, settings
     llm = FakeLLM(vision_responses=[ModelBusyError("429")])
     assert prepare_messages(conn, llm, settings, seeded_video, "Q", 295.0)
     assert [k.status for k in repo.get_keyframes(conn, seeded_video) if k.t == 260.0] == ["pending"]
+
+
+def test_a_slow_screen_does_not_hold_up_the_answer(conn, settings, seeded_video, monkeypatch):
+    """Past the wait limit the answer goes ahead with the nearest described frame; the slow one finishes later."""
+    import threading
+    import time
+
+    finished = threading.Event()
+
+    def slow_live(conn, llm, settings, video_id, t, question):
+        time.sleep(0.6)
+        finished.set()
+        return "a live description that came too late"
+
+    monkeypatch.setattr(answer, "live_frame_description", slow_live)
+    monkeypatch.setattr(answer, "SCREEN_WAIT_S", 0.1)
+    started = time.time()
+    content = user_content(prepare_messages(conn, FakeLLM(), settings, seeded_video, "Q", 250.0))
+    assert time.time() - started < 0.5
+    assert "came too late" not in content
+    assert "Parallelogram spanned by two vectors" in content  # the nearest described keyframe instead
+    assert finished.wait(2)  # the slow description still completes in the background
+
+
+def test_the_recent_and_the_live_frame_are_looked_at_together(conn, settings, seeded_video, monkeypatch):
+    import time
+
+    def slow_live(conn, llm, settings, video_id, t, question):
+        time.sleep(0.4)
+        return "the live screen"
+
+    def slow_recent(conn, llm, video_id, keyframes, t):
+        time.sleep(0.4)
+        return keyframes
+
+    monkeypatch.setattr(answer, "live_frame_description", slow_live)
+    monkeypatch.setattr(answer, "_describe_recent_frame", slow_recent)
+    started = time.time()
+    content = user_content(prepare_messages(conn, FakeLLM(), settings, seeded_video, "Q", 250.0))
+    assert "the live screen" in content
+    assert time.time() - started < 0.75  # in parallel, not 0.8 s one after the other

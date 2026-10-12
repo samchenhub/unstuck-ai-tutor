@@ -250,3 +250,15 @@ def test_no_balance_is_reported_at_once_not_retried_as_a_rate_limit():
     llm = make_llm([no_balance_error()])
     with pytest.raises(ModelQuotaError):
         list(llm.chat_stream([{"role": "user", "content": "hi"}]))
+
+
+def test_vision_calls_do_not_take_the_chat_slots(tmp_path):
+    """A slow screen description still running in the background must not hold up the answer."""
+    image = tmp_path / "f.jpg"
+    image.write_bytes(b"jpg")
+    llm = make_llm([reply("a slide")], max_concurrency=1)
+    assert llm._slots.acquire(blocking=False)  # the chat slot is busy
+    try:
+        assert llm.vision("describe", image) == "a slide"
+    finally:
+        llm._slots.release()

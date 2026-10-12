@@ -1,9 +1,10 @@
 import logging
 import sqlite3
+from concurrent.futures import ThreadPoolExecutor, wait
 from collections.abc import Iterator
 
 from unstuck.config import Settings
-from unstuck.db import repo
+from unstuck.db import connect, repo
 from unstuck.ingest import indexer, vision
 from unstuck.llm.base import LLM, ModelBusyError, ModelQuotaError
 from unstuck.models import Chat, Keyframe, Segment, Video
@@ -37,6 +38,43 @@ def _language_instruction(question: str) -> str:
     if any("\u4e00" <= ch <= "\u9fff" for ch in question):
         return "Answer in Chinese (简体中文), even though the video material may be in another language."
     return "Answer in the same language as the learner's question."
+
+
+SCREEN_WAIT_S = 8.0  # the longest a question waits for the vision model before answering without it
+_SCREEN_POOL = ThreadPoolExecutor(max_workers=4, thread_name_prefix="screen")
+
+
+def _with_conn(settings: Settings, fn):
+    """Run `fn(conn)` on a connection of its own (it may outlive the request that started it)."""
+    conn = connect(settings.db_path, settings.embed_dim)
+    try:
+        return fn(conn)
+    finally:
+        conn.close()
+
+
+def _look_at_screen(
+    llm: LLM, settings: Settings, video_id: str, keyframes: list[Keyframe], t: float, question: str
+) -> tuple[list[Keyframe], context.FrameContext | None]:
+    """Describe a pending frame from just before the pause and the live frame at it, in parallel, waiting at most
+    SCREEN_WAIT_S. Without them the answer uses the nearest described frame; descriptions that finish later
+    are still saved, so the next question here has them."""
+    recent = _SCREEN_POOL.submit(
+        _with_conn, settings, lambda c: _describe_recent_frame(c, llm, video_id, keyframes, t)
+    )
+    live = _SCREEN_POOL.submit(
+        _with_conn, settings, lambda c: _current_frame(c, llm, settings, video_id, keyframes, t, question)
+    )
+    done, _pending = wait([recent, live], timeout=SCREEN_WAIT_S)
+    if recent in done and recent.exception() is None:
+        keyframes = recent.result()
+    if live in done and live.exception() is None:
+        return keyframes, live.result()
+    log.info("the screen of %s at %.0fs took over %.0f s; answering without the live frame", video_id, t,
+             SCREEN_WAIT_S)
+    nearest = context.pick_keyframe(keyframes, t)
+    return keyframes, (context.FrameContext(t=nearest.t, text=context.describe_keyframe(nearest), live=False)
+                       if nearest is not None else None)
 
 
 def _current_frame(
@@ -132,9 +170,9 @@ def prepare_messages(
 
     segments = repo.get_segments(conn, video_id)
     visual = use_visual and video.visual_mode == "full"
-    keyframes = _describe_recent_frame(conn, llm, video_id, repo.get_keyframes(conn, video_id), t) if visual else []
+    keyframes, frame = _look_at_screen(llm, settings, video_id, repo.get_keyframes(conn, video_id), t, question) \
+        if visual else ([], None)
     window = context.window_segments(segments, t)
-    frame = _current_frame(conn, llm, settings, video_id, keyframes, t, question) if visual else None
 
     ranked: list[int] = []
     if segments:

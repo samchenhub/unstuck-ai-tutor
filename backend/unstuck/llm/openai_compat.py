@@ -56,7 +56,10 @@ class OpenAICompatLLM:
         self._vision_model = vision_model
         self._embedder = embedder
         self._extra_body = extra_body
-        self._slots = threading.Semaphore(max_concurrency)
+        self._slots = threading.Semaphore(max_concurrency)  # chat requests (answers, outline)
+        # Separate slots for vision, so a screen description still running in the background never makes an
+        # answer wait for a free slot.
+        self._vision_slots = threading.Semaphore(max_concurrency)
         self._retry_attempts = retry_attempts
         self._retry_base_delay = retry_base_delay
 
@@ -80,8 +83,10 @@ class OpenAICompatLLM:
             raise ModelBusyError(MODEL_BUSY_MESSAGE) from exc
 
     def _complete(self, model: str, messages: list[dict], *, attempts: int | None = None, **kwargs) -> str:
+        slots = self._vision_slots if model == self._vision_model else self._slots
+
         def call() -> str:
-            with self._slots:
+            with slots:
                 resp = self._client.chat.completions.create(
                     model=model, messages=messages, extra_body=self._extra_body, **kwargs
                 )
