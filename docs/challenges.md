@@ -220,3 +220,9 @@
 - **原因**：Chrome 在 Windows 上改用了"应用绑定加密"（app-bound encryption），其他程序基本无法解密它的 cookie；Firefox 还能读，但不能要求用户换浏览器。
 - **解决**：加了扫码登录：后端调用 B站网页版的扫码登录接口（生成二维码 → 每 2 秒查询：未扫码 / 已扫码待确认 / 已登录 / 已过期），登录成功后把 cookie 按 Netscape 格式保存到本地 `data/bilibili_cookies.txt`（POSIX 上只有自己可读，不写日志），B站客户端优先使用它；二维码由后端用纯 Python 的 segno 生成 SVG，前端不用新增依赖。Windows 上默认不再尝试读浏览器。Mac、Windows、Linux 都能用。
 - **代码**：`backend/unstuck/sources/bilibili/login.py`、`backend/unstuck/sources/bilibili/client.py`、`frontend/src/components/BiliLogin.tsx`
+
+### 33. 新装的电脑上导入B站视频失败："B站暂时限制了访问"
+- **问题**：在 Windows 上第一次试用，还没扫码登录，导入任何B站视频都失败，提示"B站暂时限制了访问"。Mac 上一直正常。
+- **原因**：Mac 上一直带着 Chrome 的登录 cookie，所以没碰到。实测不带任何登录信息时，旧版视频信息接口 `x/web-interface/view` 直接返回 HTTP 412（风控拦截），即使先访问首页拿到 buvid3 等设备 cookie 也一样；而带 WBI 签名的新接口 `x/web-interface/wbi/view` 未登录也能正常返回。
+- **解决**：视频信息改用 WBI 签名接口（播放地址、字幕信息本来就是签名接口）；在完全未登录的状态下实测整条导入流程（信息、字幕查询、播放地址、DASH 音频、Groq 转写）都正常。另外，Windows 上即使 `.env` 里写了 `BILIBILI_COOKIES_BROWSER=chrome`（例如从 Mac 复制过来）也会忽略，好让扫码登录出现；被限流时的提示里也会建议扫码登录。
+- **代码**：`backend/unstuck/sources/bilibili/client.py`、`backend/unstuck/config.py`
