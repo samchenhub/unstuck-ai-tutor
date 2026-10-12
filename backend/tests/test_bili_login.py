@@ -18,6 +18,8 @@ class FakePassport:
         if url.endswith("/generate"):
             return {"code": 0, "data": {"url": "https://account.bilibili.com/h5/account-h5/auth/scan-web?qrcode_key=k1",
                                         "qrcode_key": "k1"}}
+        if "/poll" not in url:
+            return {}  # opening the cross-domain URL sets nothing here
         code, url_value = self.polls.pop(0)
         return {"code": 0, "data": {"code": code, "message": "", "url": url_value, "refresh_token": "", "timestamp": 1}}
 
@@ -89,12 +91,55 @@ def test_network_problems_become_bilibili_errors(monkeypatch):
 
     from unstuck.errors import IngestError
 
-    def down(request, timeout):
-        raise urllib.error.URLError("no route to host")
+    class Down:
+        def open(self, request, timeout):
+            raise urllib.error.URLError("no route to host")
 
-    monkeypatch.setattr(login.urllib.request, "urlopen", down)
+    monkeypatch.setattr(login.urllib.request, "build_opener", lambda *handlers: Down())
     with pytest.raises(IngestError) as err:
         login.start()
     assert err.value.code == "BILIBILI_ERROR"
     with pytest.raises(IngestError):
         login.start(fetch=lambda url: {"code": 0, "data": {}})  # no url / key in the reply
+
+
+def test_cookies_set_by_the_poll_response_are_saved(tmp_path):
+    """Bilibili may set the login only through Set-Cookie on the poll reply (no values in data.url)."""
+    cookie_file = tmp_path / "c.txt"
+
+    def fetch(url):
+        return login.Reply(
+            {"code": 0, "data": {"code": 0, "url": "https://passport.biligame.com/crossDomain?gourl=https%3A%2F%2Fwww.bilibili.com"}},
+            {"SESSDATA": "abc%2C123", "bili_jct": "csrf", "DedeUserID": "42"},
+            1800000000,
+        )
+
+    assert login.poll("k1", cookie_file, fetch=fetch) == "done"
+    jar = http.cookiejar.MozillaCookieJar(str(cookie_file))
+    jar.load()
+    assert {c.name: c.value for c in jar}["SESSDATA"] == "abc%2C123"
+
+
+def test_the_cross_domain_url_is_followed_when_nothing_else_carried_the_login(tmp_path):
+    cookie_file = tmp_path / "c.txt"
+    visited = []
+
+    def fetch(url):
+        visited.append(url)
+        if "/poll" in url:
+            return login.Reply({"code": 0, "data": {"code": 0, "url": "https://passport.biligame.com/crossDomain?x=1"}}, {}, None)
+        return login.Reply({}, {"SESSDATA": "from-redirect", "bili_jct": "j"}, None)
+
+    assert login.poll("k1", cookie_file, fetch=fetch) == "done"
+    assert visited[-1] == "https://passport.biligame.com/crossDomain?x=1"
+    assert "from-redirect" in cookie_file.read_text(encoding="utf-8")
+
+
+def test_a_failed_login_logs_which_cookie_names_it_saw_not_their_values(tmp_path, caplog):
+    def fetch(url):
+        if "/poll" in url:
+            return login.Reply({"code": 0, "data": {"code": 0, "url": "https://x/?gourl=y&bili_jct=secret"}}, {"buvid3": "v"}, None)
+        return login.Reply({}, {}, None)
+
+    assert login.poll("k1", tmp_path / "c.txt", fetch=fetch) == "failed"
+    assert "bili_jct" in caplog.text and "buvid3" in caplog.text and "secret" not in caplog.text

@@ -5,6 +5,7 @@ code with the Bilibili app works everywhere. The cookies the login sets are save
 (the file yt-dlp loads) and never logged.
 """
 
+import http.cookiejar
 import json
 import logging
 import os
@@ -36,12 +37,32 @@ class QrStart:
     qr: str  # the login URL as an SVG data URI, ready for <img src>
 
 
-def _fetch_json(url: str) -> dict:
+@dataclass(frozen=True)
+class Reply:
+    body: dict  # the JSON reply ({} when the page is not JSON, e.g. a redirect page)
+    cookies: dict[str, str]  # cookies the response (and its redirects) set, values as sent (URL-encoded)
+    expires: int | None = None  # when SESSDATA expires, if it was set
+
+
+def _fetch_json(url: str) -> Reply:
+    jar = http.cookiejar.CookieJar()
+    opener = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(jar))
     try:
-        with urllib.request.urlopen(urllib.request.Request(url, headers=HEADERS), timeout=15) as resp:
-            return json.loads(resp.read().decode("utf-8"))
-    except (OSError, ValueError) as exc:  # URLError and timeouts are OSErrors; ValueError: not JSON
+        with opener.open(urllib.request.Request(url, headers=HEADERS), timeout=15) as resp:
+            raw = resp.read().decode("utf-8", errors="replace")
+    except OSError as exc:  # URLError and timeouts are OSErrors
         raise IngestError("BILIBILI_ERROR", "连接 B站登录服务失败，请稍后重试") from exc
+    try:
+        body = json.loads(raw) if raw.lstrip().startswith("{") else {}
+    except ValueError:
+        body = {}
+    cookies = {c.name: c.value for c in jar if c.value}
+    expires = next((c.expires for c in jar if c.name == "SESSDATA" and c.expires), None)
+    return Reply(body, cookies, expires)
+
+
+def _as_reply(reply: Reply | dict) -> Reply:
+    return reply if isinstance(reply, Reply) else Reply(reply, {})
 
 
 def _data(body: dict) -> dict:
@@ -50,30 +71,40 @@ def _data(body: dict) -> dict:
     return body.get("data") or {}
 
 
-def start(fetch: Callable[[str], dict] = _fetch_json) -> QrStart:
-    data = _data(fetch(f"{PASSPORT}/generate"))
+def start(fetch: Callable[[str], Reply | dict] = _fetch_json) -> QrStart:
+    data = _data(_as_reply(fetch(f"{PASSPORT}/generate")).body)
     if not data.get("url") or not data.get("qrcode_key"):
         raise IngestError("BILIBILI_ERROR", "B站登录接口没有返回二维码")
     qr = segno.make(data["url"], error="m").svg_data_uri(scale=6, border=2, dark="#000", light="#fff")
     return QrStart(key=data["qrcode_key"], qr=qr)
 
 
-def poll(key: str, cookie_file: Path, fetch: Callable[[str], dict] = _fetch_json) -> str:
+def poll(key: str, cookie_file: Path, fetch: Callable[[str], Reply | dict] = _fetch_json) -> str:
     """'waiting', 'scanned', 'expired', 'done' (cookies saved to `cookie_file`) or 'failed'."""
-    data = _data(fetch(f"{PASSPORT}/poll?{urllib.parse.urlencode({'qrcode_key': key})}"))
+    reply = _as_reply(fetch(f"{PASSPORT}/poll?{urllib.parse.urlencode({'qrcode_key': key})}"))
+    data = _data(reply.body)
     code = data.get("code")
     if code in _STATES:
         return _STATES[code]
     if code != 0:
         raise IngestError("BILIBILI_ERROR", f"B站登录失败（{code}）")
-    # The cookies come back as query parameters of a cross-domain URL (as well as Set-Cookie headers).
-    params = dict(urllib.parse.parse_qsl(urllib.parse.urlsplit(data.get("url") or "").query, keep_blank_values=True))
-    cookies = {name: urllib.parse.quote(params[name], safe="%") for name in COOKIE_NAMES if params.get(name)}
+    # Where Bilibili puts the login has varied: Set-Cookie on this reply, the query of data.url (a
+    # cross-domain URL), or cookies set when that URL is opened. Take whichever carries SESSDATA.
+    cross_url = data.get("url") or ""
+    params = dict(urllib.parse.parse_qsl(urllib.parse.urlsplit(cross_url).query, keep_blank_values=True))
+    from_url = {name: urllib.parse.quote(params[name], safe="%") for name in COOKIE_NAMES if params.get(name)}
+    cookies = {**from_url, **{n: v for n, v in reply.cookies.items() if n in COOKIE_NAMES}}
+    expires = reply.expires or (int(params["Expires"]) if params.get("Expires", "").isdigit() else None)
+    seen = {"reply": sorted(reply.cookies), "url": sorted(params)}
+    if "SESSDATA" not in cookies and cross_url.startswith("https://"):
+        followed = _as_reply(fetch(cross_url))
+        cookies.update({n: v for n, v in followed.cookies.items() if n in COOKIE_NAMES})
+        expires = expires or followed.expires
+        seen["followed"] = sorted(followed.cookies)
     if "SESSDATA" not in cookies:
-        log.warning("Bilibili QR login finished without a SESSDATA cookie")
+        log.warning("Bilibili QR login finished without SESSDATA; cookie/parameter names seen: %s", seen)
         return "failed"
-    expires = params.get("Expires", "")
-    write_cookie_file(cookie_file, cookies, int(expires) if expires.isdigit() else int(time.time()) + DEFAULT_LIFETIME_S)
+    write_cookie_file(cookie_file, cookies, expires or int(time.time()) + DEFAULT_LIFETIME_S)
     log.info("Bilibili QR login saved")
     return "done"
 
