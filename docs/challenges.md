@@ -248,3 +248,9 @@
 - **结果**：DeepSeek（`deepseek-flash`，同一个模型同时负责回答和看图）开始出字 2.4–3.9 秒（免费方案 3–8.6 秒），5 次都看到了当前画面（免费方案 1 次，其余被限流），手写黑板上的公式全部抄对，包括写了一半的 $(\cot x)'$；免费方案在一道题里编造了"公式框里写着 a≠1"并据此推出错误结论。三轮测试共花 ¥0.10，折合每次提问约半分钱。DeepSeek 的"思考"可以用和智谱一样的参数关掉（出字从 1.6 秒降到 0.8 秒），所以不用改代码，只改 `.env`。
 - **顺带的提速**：B站播放地址在有效期内复用（省 ~2 秒），实时截图的描述要求简短（2.7 秒 → 1.1 秒）。
 - **代码**：`backend/unstuck/tutor/frame.py`、`backend/.env.example`
+
+### 37. 让完全不懂电脑的人也能装：双击就能用
+- **问题**：原来要先手动装 uv、Node.js、FFmpeg 三样工具（Mac 用 Homebrew，Windows 用 winget），对不懂电脑的人太难。
+- **解决**：三样都不需要手动装了。① FFmpeg 改用随 Python 依赖一起安装的 imageio-ffmpeg（自带 7.1 版，Opus/MP3/HTTPS 都支持，Mac 和 Windows 一样）；② Node.js 只用来生成网页，改成打包时就把网页编译好放进安装包，由后端直接在 8000 端口提供，用户电脑上只运行一个程序；③ uv 由启动脚本用官方安装命令自动安装（不需要管理员权限），Python 和其他组件由 uv 自动下载。`scripts/package.sh` 一条命令生成安装包。GitHub 自动测试里专门用"全新的" Windows 和 Mac 机器（不预装任何工具）跑启动脚本，确认能自己装好并启动。
+- **仍然存在的**：第一次启动要下载约 2–3 GB（Python、AI 组件、检索模型）；Mac 和 Windows 第一次打开从网上来的文件会有一次安全提示（去掉它需要付费的开发者签名）。
+- **代码**：`start.sh`、`start.ps1`、`scripts/package.sh`、`backend/unstuck/media.py`、`backend/unstuck/api/app.py`
