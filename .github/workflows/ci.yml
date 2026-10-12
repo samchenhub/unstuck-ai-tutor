@@ -22,7 +22,14 @@ jobs:
       - uses: astral-sh/setup-uv@v5
       - name: Install ffmpeg (Windows)
         if: runner.os == 'Windows'
-        run: choco install ffmpeg -y --no-progress
+        # Chocolatey sometimes cannot reach its feed and still exits 0: retry, then make sure ffmpeg is there.
+        run: |
+          for ($i = 0; $i -lt 3; $i++) {
+            choco install ffmpeg -y --no-progress
+            if (Test-Path C:\ProgramData\chocolatey\bin\ffmpeg.exe) { break }
+            Start-Sleep -Seconds 20
+          }
+          C:\ProgramData\chocolatey\bin\ffmpeg.exe -version | Select-Object -First 1
       - name: Install ffmpeg (macOS)
         if: runner.os == 'macOS'
         run: brew install ffmpeg
@@ -64,7 +71,14 @@ jobs:
         with:
           node-version: 22
       - name: Install ffmpeg
-        run: choco install ffmpeg -y --no-progress
+        # Chocolatey sometimes cannot reach its feed and still exits 0: retry, then make sure ffmpeg is there.
+        run: |
+          for ($i = 0; $i -lt 3; $i++) {
+            choco install ffmpeg -y --no-progress
+            if (Test-Path C:\ProgramData\chocolatey\bin\ffmpeg.exe) { break }
+            Start-Sleep -Seconds 20
+          }
+          C:\ProgramData\chocolatey\bin\ffmpeg.exe -version | Select-Object -First 1
       - name: Write a test .env
         shell: pwsh
         run: |
