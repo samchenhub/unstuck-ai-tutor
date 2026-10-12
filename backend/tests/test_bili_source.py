@@ -19,7 +19,7 @@ def source(routes):
 
 
 def base_routes(sub):
-    return {"/x/web-interface/nav": [NAV], "/x/web-interface/view": [VIEW], "/x/player/wbi/v2": [PLAYER],
+    return {"/x/web-interface/nav": [NAV], "/x/web-interface/wbi/view": [VIEW], "/x/player/wbi/v2": [PLAYER],
             "aisubtitle.hdslb.com": [sub], "/x/player/wbi/playurl": [PLAYURL]}
 
 

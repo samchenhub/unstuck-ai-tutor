@@ -45,13 +45,13 @@ def test_signed_player_call_has_wbi_params():
 
 def test_backoff_on_risk_control_then_success():
     view = {"code": 0, "data": {"title": "t"}}
-    client, sleeps = make({"/x/web-interface/view": [HTTPStatusError(412), HTTPStatusError(412), view]})
+    client, sleeps = make({"/x/web-interface/nav": [NAV], "/x/web-interface/wbi/view": [HTTPStatusError(412), HTTPStatusError(412), view]})
     assert client.view("BV1Ex4y1G7nG") == {"title": "t"}
     assert sleeps == [2.0, 4.0]
 
 
 def test_backoff_exhausted_is_blocked():
-    client, sleeps = make({"/x/web-interface/view": [HTTPStatusError(412)]})
+    client, sleeps = make({"/x/web-interface/nav": [NAV], "/x/web-interface/wbi/view": [HTTPStatusError(412)]})
     with pytest.raises(IngestError) as err:
         client.view("BV1Ex4y1G7nG")
     assert err.value.code == "BILIBILI_BLOCKED"
@@ -61,14 +61,14 @@ def test_backoff_exhausted_is_blocked():
 @pytest.mark.parametrize("code,expected", [(-404, "VIDEO_UNAVAILABLE"), (62002, "VIDEO_UNAVAILABLE"),
                                            (-352, "BILIBILI_BLOCKED"), (-400, "BILIBILI_ERROR")])
 def test_json_error_codes(code, expected):
-    client, _ = make({"/x/web-interface/view": [{"code": code, "message": "x"}]})
+    client, _ = make({"/x/web-interface/nav": [NAV], "/x/web-interface/wbi/view": [{"code": code, "message": "x"}]})
     with pytest.raises(IngestError) as err:
         client.view("BV1Ex4y1G7nG")
     assert err.value.code == expected
 
 
 def test_other_http_errors_are_not_retried():
-    client, sleeps = make({"/x/web-interface/view": [HTTPStatusError(404)]})
+    client, sleeps = make({"/x/web-interface/nav": [NAV], "/x/web-interface/wbi/view": [HTTPStatusError(404)]})
     with pytest.raises(IngestError) as err:
         client.view("BV1Ex4y1G7nG")
     assert err.value.code == "BILIBILI_ERROR"
@@ -112,6 +112,9 @@ def test_unreadable_cookies_degrade_to_anonymous(monkeypatch):
     built = []
 
     class Resp:
+        def __init__(self, url):
+            self.body = NAV if "/nav" in url else {"code": 0, "data": {"title": "t"}}
+
         def __enter__(self):
             return self
 
@@ -119,7 +122,7 @@ def test_unreadable_cookies_degrade_to_anonymous(monkeypatch):
             return False
 
         def read(self):
-            return json.dumps({"code": 0, "data": {"title": "t"}}).encode()
+            return json.dumps(self.body).encode()
 
     class FakeYDL:
         def __init__(self, opts):
@@ -129,7 +132,7 @@ def test_unreadable_cookies_degrade_to_anonymous(monkeypatch):
         def urlopen(self, url):
             if "cookiesfrombrowser" in self.opts:
                 raise CookieLoadError("failed to load cookies")
-            return Resp()
+            return Resp(url)
 
     monkeypatch.setattr("unstuck.sources.bilibili.client.YoutubeDL", FakeYDL)
     client = BiliClient("chrome")
@@ -166,10 +169,10 @@ def test_transport_errors_are_retried_but_plain_oserror_is_not():
     from yt_dlp.networking.exceptions import TransportError
 
     view = {"code": 0, "data": {"title": "t"}}
-    client, sleeps = make({"/x/web-interface/view": [TransportError("reset"), view]})
+    client, sleeps = make({"/x/web-interface/nav": [NAV], "/x/web-interface/wbi/view": [TransportError("reset"), view]})
     assert client.view("BV1Ex4y1G7nG") == {"title": "t"}
     assert sleeps == [2.0]
-    client, sleeps = make({"/x/web-interface/view": [OSError("disk")]})
+    client, sleeps = make({"/x/web-interface/nav": [NAV], "/x/web-interface/wbi/view": [OSError("disk")]})
     with pytest.raises(IngestError) as err:
         client.view("BV1Ex4y1G7nG")
     assert err.value.code == "BILIBILI_ERROR" and sleeps == []
@@ -201,3 +204,12 @@ def test_check_login_does_not_reread_unreadable_cookies():
     client.cookies_unavailable = True  # e.g. the macOS keychain prompt was refused
     assert client.check_login() is False
     assert client.cookies_unavailable is True
+
+
+def test_video_info_uses_the_signed_endpoint():
+    """Bilibili answers 412 to the unsigned view endpoint when logged out; the WBI-signed one works."""
+    fetch = FakeFetch({"/x/web-interface/nav": [NAV], "/x/web-interface/wbi/view": [{"code": 0, "data": {"title": "t"}}]})
+    client = BiliClient("", fetch_json=fetch, sleep=lambda s: None, clock=lambda: 1702204169.0)
+    assert client.view("BV1Ex4y1G7nG") == {"title": "t"}
+    url = [u for u in fetch.urls if "/wbi/view" in u][0]
+    assert "bvid=BV1Ex4y1G7nG" in url and "w_rid=" in url and "wts=" in url

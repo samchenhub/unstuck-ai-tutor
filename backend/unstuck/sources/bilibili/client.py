@@ -28,7 +28,7 @@ LOGIN_CACHE_S = 300.0
 _RETRY_STATUS = {412, 429, 500, 502, 503, 504}
 _UNAVAILABLE_CODES = {-404, 62002, 62004, 62012}
 _BLOCKED_CODES = {-352, -412}
-BLOCKED_MESSAGE = "B站暂时限制了访问，请稍后重试"
+BLOCKED_MESSAGE = "B站暂时限制了访问，请稍后重试（没登录时更容易被限制：在首页扫码登录B站后通常可以避免）"
 UNAVAILABLE_MESSAGE = "视频不存在或不可访问（可能已删除、仅会员可见或有地区限制）"
 
 
@@ -184,7 +184,8 @@ class BiliClient:
         return self.is_logged_in(force=not self.cookies_unavailable)
 
     def view(self, bvid: str) -> dict:
-        return self._data(self.get(self._url("/x/web-interface/view", {"bvid": bvid})))
+        # The WBI-signed endpoint: when logged out, Bilibili answers 412 to the unsigned one (seen 2026-10).
+        return self._signed("/x/web-interface/wbi/view", {"bvid": bvid})
 
     def player(self, bvid: str, cid: int) -> dict:
         return self._signed("/x/player/wbi/v2", {"bvid": bvid, "cid": cid})

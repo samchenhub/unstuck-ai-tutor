@@ -46,3 +46,12 @@ def test_bilibili_cookie_browser_setting(monkeypatch, tmp_path):
     assert default_cookies_browser("nt") == ""  # Chrome's cookies are unreadable on Windows: QR login instead
     monkeypatch.setenv("BILIBILI_COOKIES_BROWSER", "")
     assert load_settings(env_file=False).bilibili_cookies_browser == ""
+
+
+def test_chrome_is_not_read_on_windows():
+    from unstuck.config import cookies_browser_for
+
+    assert cookies_browser_for("chrome", "nt") == ""  # e.g. a .env copied from a Mac
+    assert cookies_browser_for("Chrome", "nt") == ""
+    assert cookies_browser_for("firefox", "nt") == "firefox"
+    assert cookies_browser_for("chrome", "posix") == "chrome"

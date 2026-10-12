@@ -45,6 +45,13 @@ def default_cookies_browser(os_name: str = os.name) -> str:
     return "" if os_name == "nt" else "chrome"
 
 
+def cookies_browser_for(value: str, os_name: str = os.name) -> str:
+    """Chrome's cookies cannot be read on Windows (e.g. BILIBILI_COOKIES_BROWSER=chrome in a .env copied from a
+    Mac): skip it there, so the QR-code login is offered instead of failing on every request."""
+    value = value.strip()
+    return "" if os_name == "nt" and value.lower() == "chrome" else value
+
+
 def load_settings(env_file: bool = True) -> Settings:
     if env_file:
         load_dotenv()
@@ -60,7 +67,7 @@ def load_settings(env_file: bool = True) -> Settings:
         max_duration_s=int(os.getenv("MAX_DURATION_S", "7200")),
         llm_disable_thinking=_flag(os.getenv("LLM_DISABLE_THINKING", "1")),
         llm_max_concurrency=int(os.getenv("LLM_MAX_CONCURRENCY", "2")),
-        bilibili_cookies_browser=os.getenv("BILIBILI_COOKIES_BROWSER", default_cookies_browser()).strip(),
+        bilibili_cookies_browser=cookies_browser_for(os.getenv("BILIBILI_COOKIES_BROWSER", default_cookies_browser())),
         groq_api_key=os.getenv("GROQ_API_KEY", "").strip(),
         groq_base_url=os.getenv("GROQ_BASE_URL", "https://api.groq.com/openai/v1"),
         groq_whisper_model=os.getenv("GROQ_WHISPER_MODEL", "whisper-large-v3-turbo"),
