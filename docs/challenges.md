@@ -226,3 +226,9 @@
 - **原因**：Mac 上一直带着 Chrome 的登录 cookie，所以没碰到。实测不带任何登录信息时，旧版视频信息接口 `x/web-interface/view` 直接返回 HTTP 412（风控拦截），即使先访问首页拿到 buvid3 等设备 cookie 也一样；而带 WBI 签名的新接口 `x/web-interface/wbi/view` 未登录也能正常返回。
 - **解决**：视频信息改用 WBI 签名接口（播放地址、字幕信息本来就是签名接口）；在完全未登录的状态下实测整条导入流程（信息、字幕查询、播放地址、DASH 音频、Groq 转写）都正常。另外，Windows 上即使 `.env` 里写了 `BILIBILI_COOKIES_BROWSER=chrome`（例如从 Mac 复制过来）也会忽略，好让扫码登录出现；被限流时的提示里也会建议扫码登录。
 - **代码**：`backend/unstuck/sources/bilibili/client.py`、`backend/unstuck/config.py`
+
+### 34. 手机上确认登录了，电脑上却显示"登录没有成功"
+- **问题**：用手机B站 App 扫码并确认后，Unstuck 显示"登录没有成功，请重试"。
+- **原因**：扫码状态已经是"成功"，但程序只从返回结果里那个跨域链接（`data.url`）的参数中读取 SESSDATA，而 B站现在不再把登录 cookie 放在这个链接里，而是通过响应头 Set-Cookie 下发。网上的社区文档对这一点说法不一，没有真机扫码很难确认。
+- **解决**：同时从三个地方取：扫码状态接口响应的 Set-Cookie、`data.url` 的参数、以及实际打开 `data.url` 时设置的 cookie，哪里有 SESSDATA 就用哪里；登录失败时在日志里记下各处看到的 cookie/参数**名字**（不记录值），以后再变也能快速定位。
+- **代码**：`backend/unstuck/sources/bilibili/login.py`
