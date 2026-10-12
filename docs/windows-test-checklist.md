@@ -10,23 +10,22 @@
 winget install -e --id astral-sh.uv
 winget install -e --id OpenJS.NodeJS.LTS
 winget install -e --id Gyan.FFmpeg
-winget install -e --id Git.Git
 ```
 
 ## 2. 下载代码
 
-```powershell
-cd $HOME
-git clone https://github.com/samchenhub/unstuck-ai-tutor.git
-cd unstuck-ai-tutor
-git checkout feat/windows
-```
+任选一种：
 
-（Windows 支持合并前在 `feat/windows` 分支上；合并后就不需要第三行。）
+- **不用 Git**：浏览器打开 https://github.com/samchenhub/unstuck-ai-tutor/archive/refs/heads/main.zip ，下载后右键 →「全部解压缩」。
+- **用 Git**：
+  ```powershell
+  cd $HOME
+  git clone https://github.com/samchenhub/unstuck-ai-tutor.git
+  ```
 
 ## 3. 第一次启动
 
-在文件资源管理器里打开 `unstuck-ai-tutor` 文件夹，双击 `Unstuck.bat`。
+在文件资源管理器里打开下载好的文件夹（`unstuck-ai-tutor` 或 `unstuck-ai-tutor-main`），双击 `Unstuck.bat`。
 
 - [ ] 窗口提示「已创建 backend\.env」：用记事本打开 `backend\.env`，填入 `LLM_API_KEY`（智谱）和 `GROQ_API_KEY`，保存。
 - [ ] 再双击 `Unstuck.bat`：第一次会安装依赖（几分钟），之后浏览器自动打开 http://localhost:5173 。
