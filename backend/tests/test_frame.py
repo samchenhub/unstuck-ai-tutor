@@ -116,3 +116,41 @@ def test_a_described_live_frame_is_kept_as_a_keyframe(conn, settings, sample_vid
     live_frame_description(conn, FakeLLM(vision_responses=["白板上写着链式法则"]), settings, VID, 1.4, "q")
     frames = repo.get_keyframes(conn, VID)
     assert [(f.t, f.status, f.summary) for f in frames] == [(1.0, "ok", "白板上写着链式法则")]
+
+
+def test_the_stream_url_is_reused_while_it_is_valid(conn, settings, monkeypatch):
+    """Asking Bilibili for a playback URL takes ~2 s; it stays valid for about two hours."""
+    import time
+
+    repo.insert_video(conn, "BV1Ex4y1G7nG_p1", "u", source="bilibili", course_id="BV1Ex4y1G7nG", part=1)
+    lookups = []
+
+    class StreamSource:
+        frames_from_stream = True
+        stream_headers = {}
+
+        def playback(self, video_id, quality=720):
+            lookups.append(video_id)
+            return Playback(kind="mp4", url="https://upos.bilivideo.com/v.mp4", expires_at=time.time() + 7200)
+
+    monkeypatch.setattr(sources, "for_video", lambda video, s: StreamSource())
+    calls = _record_extract(monkeypatch)
+    llm = FakeLLM(vision_responses=["a", "b", "c"])
+    live_frame_description(conn, llm, settings, "BV1Ex4y1G7nG_p1", 10.0, "q")
+    live_frame_description(conn, llm, settings, "BV1Ex4y1G7nG_p1", 20.0, "q")
+    assert len(lookups) == 1 and len(calls) == 2
+
+    def broken(video, t, out_path, **kwargs):
+        raise RuntimeError("403 Forbidden")
+
+    monkeypatch.setattr("unstuck.tutor.frame.media.extract_frame", broken)
+    live_frame_description(conn, llm, settings, "BV1Ex4y1G7nG_p1", 30.0, "q")  # fails: the URL may have expired
+    _record_extract(monkeypatch)
+    live_frame_description(conn, llm, settings, "BV1Ex4y1G7nG_p1", 40.0, "q")
+    assert len(lookups) == 2  # asked again after the failure
+
+
+def test_the_live_frame_prompt_asks_for_a_short_description():
+    from unstuck.tutor.frame import LIVE_FRAME_PROMPT
+
+    assert "150 words" in LIVE_FRAME_PROMPT and "LaTeX" in LIVE_FRAME_PROMPT

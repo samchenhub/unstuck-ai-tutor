@@ -1,5 +1,6 @@
 import logging
 import sqlite3
+import time
 from pathlib import Path
 
 import imagehash
@@ -14,9 +15,14 @@ from unstuck.models import FrameDescription, NewKeyframe
 
 log = logging.getLogger(__name__)
 
+# Short on purpose: the answer waits for this, and generation time grows with its length (329 → 77 output
+# tokens took 2.7 → 1.1 s on deepseek-flash).
 LIVE_FRAME_PROMPT = """This is the frame a learner is looking at in an educational video at the moment they paused to ask a question.
-Describe everything on screen that could matter for teaching: transcribe all text, write formulas in LaTeX, copy code exactly, and explain any diagram.
-Pay special attention to anything related to the learner's question: {question}"""
+Be concise, at most about 150 words: copy formulas exactly in LaTeX and code verbatim, and summarize the rest of the screen (text, diagrams) briefly.
+Focus on what relates to the learner's question: {question}"""
+
+STREAM_URL_MARGIN_S = 600.0  # reuse a stream URL until 10 minutes before it expires
+_stream_urls: dict[tuple[str, str], tuple[str, float]] = {}
 
 
 def live_frame_description(
@@ -33,7 +39,11 @@ def live_frame_description(
         return None
     image = video_dir / "live" / f"{second}.jpg"
     try:
-        media.extract_frame(frame_input, float(second), image, headers=headers)
+        try:
+            media.extract_frame(frame_input, float(second), image, headers=headers)
+        except Exception:
+            _stream_urls.pop((str(settings.db_path), video_id), None)  # perhaps expired: look it up next time
+            raise
         description = llm.vision(LIVE_FRAME_PROMPT.format(question=question), image, attempts=2).strip()
     except Exception:
         log.warning("live frame failed for %s at %ss", video_id, second, exc_info=True)
@@ -71,8 +81,15 @@ def _frame_input(
     src = sources.for_video(video, settings)
     if not src.frames_from_stream:
         return None, None
+    key = (str(settings.db_path), video_id)
+    cached = _stream_urls.get(key)
+    if cached is not None and cached[1] - time.time() > STREAM_URL_MARGIN_S:
+        return cached[0], src.stream_headers  # asking Bilibili for a URL takes ~2 s; it stays valid ~2 h
     try:
-        return src.playback(video_id).url or None, src.stream_headers
+        playback = src.playback(video_id)
     except Exception:
         log.warning("no stream URL for live frame of %s", video_id, exc_info=True)
         return None, None
+    if playback.url and playback.expires_at:
+        _stream_urls[key] = (playback.url, playback.expires_at)
+    return playback.url or None, src.stream_headers
