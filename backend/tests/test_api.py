@@ -160,11 +160,12 @@ def test_get_llm_builds_the_real_llm_exactly_once_across_threads(settings, runne
 
 
 def test_startup_warns_when_ffmpeg_is_missing(settings, fake_llm, runner, monkeypatch, caplog):
+    monkeypatch.setattr("unstuck.api.app.media.ffmpeg_exe", lambda: "ffmpeg")  # neither bundled nor installed
     monkeypatch.setattr("unstuck.api.app.shutil.which", lambda name: None)
     with caplog.at_level("WARNING"):
         with TestClient(create_app(settings=settings, llm=fake_llm, runner=runner)):
             pass
-    assert "ffmpeg 未安装" in caplog.text
+    assert "找不到 ffmpeg" in caplog.text
 
 
 class FakeBiliSource:
@@ -320,3 +321,16 @@ def test_qr_login_only_polls_codes_this_app_issued(client, settings, monkeypatch
     client.delete("/api/bilibili/login")  # logging out also cancels a login in progress
     assert client.get("/api/bilibili/login/mine").status_code == 404
     assert polled == ["mine"]
+
+
+def test_the_built_web_app_is_served_with_the_api(settings, fake_llm, runner, tmp_path, monkeypatch):
+    """One program for non-technical users: the backend serves the built frontend, so Node is not needed."""
+    dist = tmp_path / "dist"
+    (dist / "assets").mkdir(parents=True)
+    (dist / "index.html").write_text("<!doctype html><title>Unstuck</title>", encoding="utf-8")
+    (dist / "assets" / "app.js").write_text("console.log(1)", encoding="utf-8")
+    monkeypatch.setenv("UNSTUCK_FRONTEND_DIST", str(dist))
+    with TestClient(create_app(settings=settings, llm=fake_llm, runner=runner)) as c:
+        assert "<title>Unstuck</title>" in c.get("/").text
+        assert c.get("/assets/app.js").text == "console.log(1)"
+        assert c.get("/api/health").json() == {"ok": True}

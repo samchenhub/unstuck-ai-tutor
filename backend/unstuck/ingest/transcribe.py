@@ -8,6 +8,7 @@ from pathlib import Path
 import numpy as np
 
 from unstuck.ingest.cloud_asr import CloudTranscriber
+from unstuck.media import ffmpeg_exe
 from unstuck.models import Cue
 from unstuck.sources.base import AudioFeed
 
@@ -38,7 +39,7 @@ def load_audio(
 
     faster-whisper's own decoder goes through PyAV, whose `open()` signature changed in v19 and breaks it.
     """
-    cmd = ["ffmpeg", "-nostdin", "-loglevel", "error"]
+    cmd = [ffmpeg_exe(), "-nostdin", "-loglevel", "error"]
     if start > 0:
         cmd += ["-ss", f"{start:.3f}"]
     cmd += ["-i", str(path)]

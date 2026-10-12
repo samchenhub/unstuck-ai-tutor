@@ -16,6 +16,7 @@ dependencies = [
   "sentence-transformers>=3.0",
   "json-repair>=0.30",
   "segno>=1.6",
+  "imageio-ffmpeg>=0.5",
 ]
 
 [dependency-groups]

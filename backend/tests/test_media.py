@@ -41,3 +41,27 @@ def test_extract_frame_without_headers_adds_no_header_flags(tmp_path, monkeypatc
     captured = _capture_argv(monkeypatch)
     extract_frame("https://cdn.example/v.mp4", 3.0, tmp_path / "f.jpg")
     assert "-user_agent" not in captured["argv"] and "-headers" not in captured["argv"]
+
+
+def test_ffmpeg_comes_with_the_app():
+    """No separate install: the bundled ffmpeg (imageio-ffmpeg) is used, with a system one only as a fallback."""
+    import subprocess
+
+    from unstuck import media
+
+    exe = media.ffmpeg_exe()
+    assert Path(exe).exists()
+    encoders = subprocess.run([exe, "-hide_banner", "-encoders"], capture_output=True, text=True).stdout
+    assert "libopus" in encoders  # cloud transcription uploads Opus
+
+
+def test_system_ffmpeg_is_the_fallback(monkeypatch):
+    from unstuck import media
+
+    media.ffmpeg_exe.cache_clear()
+    monkeypatch.setattr(media, "_bundled_ffmpeg", lambda: None)
+    monkeypatch.setattr(media.shutil, "which", lambda name: "/usr/bin/ffmpeg" if name == "ffmpeg" else None)
+    try:
+        assert media.ffmpeg_exe() == "/usr/bin/ffmpeg"
+    finally:
+        media.ffmpeg_exe.cache_clear()

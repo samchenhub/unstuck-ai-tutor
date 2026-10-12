@@ -12,6 +12,8 @@ from collections.abc import Callable
 import numpy as np
 import openai
 
+from unstuck.media import ffmpeg_exe
+
 log = logging.getLogger(__name__)
 
 SIMPLIFIED_PROMPT = "以下是普通话的句子，请使用简体中文。"
@@ -36,7 +38,7 @@ def encode_samples(samples: np.ndarray, sample_rate: int = 16000) -> tuple[bytes
         (["-c:a", "libmp3lame", "-b:a", "32k"], "mp3", "chunk.mp3", "audio/mpeg"),
         (["-c:a", "pcm_s16le"], "wav", "chunk.wav", "audio/wav"),
     ):
-        cmd = ["ffmpeg", "-nostdin", "-loglevel", "error", *source, *codec, "-f", fmt, "-"]
+        cmd = [ffmpeg_exe(), "-nostdin", "-loglevel", "error", *source, *codec, "-f", fmt, "-"]
         try:
             result = subprocess.run(cmd, input=pcm, capture_output=True, check=True, timeout=300)
         except (subprocess.CalledProcessError, subprocess.TimeoutExpired, FileNotFoundError):

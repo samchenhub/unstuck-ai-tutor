@@ -1,17 +1,20 @@
 import json
 import logging
+import os
 import shutil
 import threading
 from collections.abc import Iterator
 from contextlib import asynccontextmanager
 from dataclasses import asdict
+from pathlib import Path
 from typing import Annotated
 
 from fastapi import Depends, FastAPI, HTTPException
 from fastapi.responses import StreamingResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, StringConstraints
 
-from unstuck import sources
+from unstuck import media, sources
 from unstuck.api.runner import PipelineRunner
 from unstuck.sources.bilibili import login as bili_login
 from unstuck.sources.bilibili.source import client_for as bilibili_client_for
@@ -68,8 +71,8 @@ def create_app(settings: Settings | None = None, llm: LLM | None = None, runner=
 
     @asynccontextmanager
     async def lifespan(_app: FastAPI):
-        if shutil.which("ffmpeg") is None:
-            log.warning("ffmpeg 未安装：无法抽取关键帧和实时截帧")
+        if not Path(media.ffmpeg_exe()).exists() and shutil.which(media.ffmpeg_exe()) is None:
+            log.warning("找不到 ffmpeg：无法转写语音、抽取关键帧和实时截帧")
         conn = connect(settings.db_path, settings.embed_dim)
         try:
             for video in repo.list_videos(conn):
@@ -227,7 +230,16 @@ def create_app(settings: Settings | None = None, llm: LLM | None = None, runner=
             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
         )
 
+    _serve_web_app(app)
     return app
+
+
+def _serve_web_app(app: FastAPI) -> None:
+    """Serve the built frontend (frontend/dist) from the API's own port, so users need neither Node nor a second
+    server. Development keeps using Vite on :5173, which proxies /api here."""
+    dist = Path(os.environ.get("UNSTUCK_FRONTEND_DIST") or Path(__file__).resolve().parents[3] / "frontend" / "dist")
+    if (dist / "index.html").is_file():
+        app.mount("/", StaticFiles(directory=dist, html=True), name="web")
 
 
 def _vision_state(video, described: int, total: int) -> str:
