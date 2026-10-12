@@ -53,27 +53,11 @@ FastAPI · SQLite + sqlite-vec · yt-dlp · ffmpeg · Groq Whisper API / faster-
 
 ## Run it locally
 
-Prerequisites: [uv](https://docs.astral.sh/uv/), Node 20.19+ (required by Vite 8), ffmpeg, and a Zhipu API key from open.bigmodel.cn. Works on macOS, Windows and Linux (CI runs the tests on all three).
+**Easiest (no setup)**: get a package built with `scripts/package.sh` (it contains the pre-built web page), unzip it and double-click `Unstuck.command` (macOS) or `Unstuck.bat` (Windows). The first run installs everything by itself — uv (official installer, no admin rights), Python, the AI components and ffmpeg (bundled) — which downloads about 2–3 GB and can take 10–20 minutes; later starts take seconds. Unstuck then opens at http://localhost:8000; close the window to stop it. On the first run it creates `backend/.env` from `.env.example`; put your key in `LLM_API_KEY` (Notepad is fine) and run it again. macOS and Windows warn once about a file from the internet: right-click → Open on macOS, More info → Run anyway on Windows.
 
-**macOS**: `brew install uv node ffmpeg`, then double-click `Unstuck.command` in Finder, or run
+**From a clone** (needs [Node](https://nodejs.org) 20.19+ to build the web page once): run `./start.sh` (macOS/Linux) or double-click `Unstuck.bat` (Windows); they build the page when it is missing or out of date. To build a package for others: `scripts/package.sh` (add `--with-env` to include your `backend/.env`, i.e. your API keys — only for people you trust).
 
-```bash
-./start.sh
-```
-
-**Windows**: install the prerequisites once (in PowerShell or Terminal, then open a new window so they are on the PATH):
-
-```powershell
-winget install -e --id astral-sh.uv
-winget install -e --id OpenJS.NodeJS.LTS
-winget install -e --id Gyan.FFmpeg
-```
-
-then double-click `Unstuck.bat` (it runs `start.ps1`). On a managed PC (school/office) where Group Policy forbids PowerShell scripts, run the two servers by hand as shown below.
-
-The launcher installs missing dependencies, starts the backend (:8000) and frontend (:5173), and opens http://localhost:5173. Press Ctrl+C or close the window to stop both. On the first run it creates `backend/.env` from `.env.example`; put your key in `LLM_API_KEY` (Notepad is fine) and run it again.
-
-To run the two servers separately instead:
+For development with hot reload, run the backend and Vite separately (Vite on :5173 proxies `/api` to :8000):
 
 ```bash
 cd backend && uv sync && uv run uvicorn unstuck.api.app:create_app --factory --port 8000
