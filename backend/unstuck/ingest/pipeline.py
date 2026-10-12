@@ -7,7 +7,7 @@ from pathlib import Path
 from unstuck.config import Settings
 from unstuck.db import repo
 from unstuck.errors import IngestError
-from unstuck.llm.base import LLM, ModelBusyError
+from unstuck.llm.base import LLM, ModelBusyError, ModelQuotaError
 
 log = logging.getLogger(__name__)
 
@@ -38,6 +38,8 @@ StageFn = Callable[[StageContext], str | None]
 def _describe(stage: str, exc: Exception) -> tuple[str, str]:
     if isinstance(exc, IngestError):
         return exc.code, exc.message
+    if isinstance(exc, ModelQuotaError):
+        return "NO_BALANCE", f"{stage} 阶段：{exc}"
     if isinstance(exc, ModelBusyError):
         return "MODEL_BUSY", f"{stage} 阶段：模型当前访问量过大（免费额度限流），稍后会自动重试，也可以点击重试"
     return "STAGE_FAILED", f"{stage} 阶段失败：{exc}"[:500]

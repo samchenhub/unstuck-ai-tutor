@@ -8,7 +8,7 @@ from typing import TypeVar
 import openai
 from openai import OpenAI
 
-from unstuck.llm.base import ModelBusyError
+from unstuck.llm.base import ModelBusyError, ModelQuotaError
 from unstuck.llm.embedder import BgeM3Embedder
 from unstuck.llm.retry import with_retry
 
@@ -20,6 +20,17 @@ RETRYABLE = (
 )
 
 MODEL_BUSY_MESSAGE = "模型当前访问量过大（免费额度限流），请稍后重试"
+NO_BALANCE_MESSAGE = (
+    "模型账户余额不足或没有可用资源包：请到 bigmodel.cn 充值，或在 backend/.env 里换回免费模型"
+    "（CHAT_MODEL=glm-4.7-flash，VISION_MODEL=glm-4.6v-flash）"
+)
+_NO_BALANCE_CODES = {"1113"}  # Zhipu answers HTTP 429 for both rate limits and an empty balance
+
+
+def _is_no_balance(exc: openai.RateLimitError) -> bool:
+    body = exc.body if isinstance(exc.body, dict) else {}
+    error = body.get("error") if isinstance(body.get("error"), dict) else body
+    return str(error.get("code", "")) in _NO_BALANCE_CODES or "余额不足" in str(error.get("message", ""))
 
 T = TypeVar("T")
 
@@ -52,9 +63,18 @@ class OpenAICompatLLM:
     def _with_retry(self, fn: Callable[[], T], attempts: int | None = None) -> T:
         # Free tiers rate-limit in bursts, so the default waits 2+4+8+16+32 s before giving up.
         # Interactive callers pass a smaller `attempts` so a busy model fails fast.
+        def call() -> T:
+            try:
+                return fn()
+            except openai.RateLimitError as exc:
+                if _is_no_balance(exc):
+                    raise ModelQuotaError(NO_BALANCE_MESSAGE) from exc
+                raise
+
         try:
             return with_retry(
-                fn, attempts=attempts or self._retry_attempts, base_delay=self._retry_base_delay, retry_on=RETRYABLE
+                call, attempts=attempts or self._retry_attempts, base_delay=self._retry_base_delay,
+                retry_on=RETRYABLE, give_up_on=(ModelQuotaError,),
             )
         except openai.RateLimitError as exc:
             raise ModelBusyError(MODEL_BUSY_MESSAGE) from exc

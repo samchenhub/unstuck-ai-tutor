@@ -231,3 +231,22 @@ def test_chat_stream_attempts_override_limits_retries_then_model_busy():
     with pytest.raises(ModelBusyError):
         list(llm.chat_stream([{"role": "user", "content": "hi"}], attempts=2))
     assert len(llm._client.calls) == 2
+
+
+def no_balance_error():
+    request = httpx.Request("POST", "http://x")
+    body = {"error": {"code": "1113", "message": "余额不足或无可用资源包,请充值。"}}
+    return openai.RateLimitError("Error code: 429", response=httpx.Response(429, request=request, json=body), body=body)
+
+
+def test_no_balance_is_reported_at_once_not_retried_as_a_rate_limit():
+    from unstuck.llm import ModelQuotaError
+
+    llm = make_llm([no_balance_error()])
+    with pytest.raises(ModelQuotaError, match="余额不足") as info:
+        llm.chat([{"role": "user", "content": "hi"}])
+    assert len(llm._client.calls) == 1
+    assert isinstance(info.value, ModelBusyError)  # background jobs still back off and try again later
+    llm = make_llm([no_balance_error()])
+    with pytest.raises(ModelQuotaError):
+        list(llm.chat_stream([{"role": "user", "content": "hi"}]))

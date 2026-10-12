@@ -5,7 +5,7 @@ from collections.abc import Iterator
 from unstuck.config import Settings
 from unstuck.db import repo
 from unstuck.ingest import indexer, vision
-from unstuck.llm.base import LLM, ModelBusyError
+from unstuck.llm.base import LLM, ModelBusyError, ModelQuotaError
 from unstuck.models import Chat, Keyframe, Segment, Video
 from unstuck.timefmt import fmt_ts
 from unstuck.tutor import context
@@ -174,9 +174,9 @@ def stream_answer(
 ) -> Iterator[dict]:
     try:
         messages = prepare_messages(conn, llm, settings, video_id, question, t)
-    except ModelBusyError:
+    except ModelBusyError as exc:
         log.warning("model busy while preparing context for %s", video_id)
-        yield {"type": "error", "message": ANSWER_BUSY_MESSAGE}
+        yield {"type": "error", "message": _busy_message(exc)}
         return
     except Exception:
         log.exception("failed to prepare context for %s", video_id)
@@ -202,11 +202,15 @@ def stream_answer(
     except Exception as exc:
         log.exception("answer stream failed for %s", video_id)
         chat_id = _save_answer(conn, video_id, parts, t, complete=False)
-        yield _interrupted(chat_id, ANSWER_BUSY_MESSAGE if isinstance(exc, ModelBusyError) else None)
+        yield _interrupted(chat_id, _busy_message(exc) if isinstance(exc, ModelBusyError) else None)
         return
 
     chat_id = _save_answer(conn, video_id, parts, t, complete=True)
     yield {"type": "done", "chat_id": chat_id} if chat_id is not None else _interrupted(None)
+
+
+def _busy_message(exc: ModelBusyError) -> str:
+    return str(exc) if isinstance(exc, ModelQuotaError) else ANSWER_BUSY_MESSAGE
 
 
 def _save_answer(conn: sqlite3.Connection, video_id: str, parts: list[str], t: float, *, complete: bool) -> int | None:

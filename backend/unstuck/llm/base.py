@@ -7,6 +7,11 @@ class ModelBusyError(Exception):
     """The model provider kept rate-limiting us after every retry."""
 
 
+class ModelQuotaError(ModelBusyError):
+    """The provider refused for billing reasons (no balance or resource pack left), e.g. a paid model on an
+    account without credit. Retrying at once does not help; background jobs still back off and try later."""
+
+
 class LLM(Protocol):
     """Every model call in Unstuck goes through this interface."""
 
