@@ -60,32 +60,45 @@ jobs:
       - run: npm test
       - run: npm run build
 
+  # A fresh machine: no uv, ffmpeg or Node installed; the launcher must install what it needs by itself.
+  # The web page is built first, as scripts/package.sh does for the packages people download.
   launcher-windows:
-    name: launcher (windows, Windows PowerShell 5.1)
+    name: launcher (windows, fresh machine)
     runs-on: windows-latest
-    timeout-minutes: 15
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v5
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-      - name: Install ffmpeg
-        # Chocolatey sometimes cannot reach its feed and still exits 0: retry, then make sure ffmpeg is there.
+      - name: Build the web page (as in a package)
+        shell: pwsh
         run: |
-          for ($i = 0; $i -lt 3; $i++) {
-            choco install ffmpeg -y --no-progress
-            if (Test-Path C:\ProgramData\chocolatey\bin\ffmpeg.exe) { break }
-            Start-Sleep -Seconds 20
-          }
-          C:\ProgramData\chocolatey\bin\ffmpeg.exe -version | Select-Object -First 1
+          cd frontend
+          npm ci
+          npm run build
       - name: Write a test .env
         shell: pwsh
         run: |
           Set-Content backend\.env "LLM_API_KEY=ci-test-key`nBILIBILI_COOKIES_BROWSER=`nUNSTUCK_DATA_DIR=data"
-      - name: Start with start.ps1 and check both servers answer
+      - name: Start with Unstuck's own launcher and check it answers
         shell: cmd
         env:
           UNSTUCK_NO_OPEN: "1"
           UNSTUCK_SMOKE_TEST: "1"
         run: powershell -NoProfile -ExecutionPolicy Bypass -File start.ps1
+
+  launcher-macos:
+    name: launcher (macos, fresh machine)
+    runs-on: macos-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build the web page (as in a package)
+        run: cd frontend && npm ci && npm run build
+      - name: Write a test .env
+        run: printf 'LLM_API_KEY=ci-test-key\nBILIBILI_COOKIES_BROWSER=\nUNSTUCK_DATA_DIR=data\n' > backend/.env
+      - name: Start with Unstuck's own launcher and check it answers
+        env:
+          UNSTUCK_NO_OPEN: "1"
+          UNSTUCK_SMOKE_TEST: "1"
+        run: |
+          if command -v uv; then echo "uv is preinstalled on this runner"; fi
+          ./start.sh
